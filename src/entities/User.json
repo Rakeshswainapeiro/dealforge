@@ -1,0 +1,21 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "organization": {
+      "type": "string",
+      "description": "Organization/company name the user belongs to"
+    },
+    "department": {
+      "type": "string",
+      "description": "Department within the organization"
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Groups the user belongs to"
+    }
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "generated_at": "2026-09-27T09:17:49.478Z",
+  "tool": "scripts/security_scan.mjs",
+  "version": "NFR-02.1",
+  "dependency_audit": {
+    "server_runtime": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "advisories": []
+    },
+    "frontend_build": {
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 2,
+        "high": 0,
+        "critical": 0,
+        "total": 2
+      },
+      "advisories": [
+        {
+          "name": "quill",
+          "severity": "moderate",
+          "titles": [
+            "Cross-site Scripting in quill"
+          ],
+          "fix_available": true
+        },
+        {
+          "name": "react-quill",
+          "severity": "moderate",
+          "titles": [
+            "quill"
+          ],
+          "fix_available": true
+        }
+      ]
+    },
+    "dev_tree": {
+      "counts": {
+        "info": 0,
+        "low": 2,
+        "moderate": 2,
+        "high": 0,
+        "critical": 0,
+        "total": 4
+      },
+      "advisories": [
+        {
+          "name": "@flydotio/dockerfile",
+          "severity": "low",
+          "titles": [
+            "diff"
+          ],
+          "fix_available": true
+        },
+        {
+          "name": "diff",
+          "severity": "low",
+          "titles": [
+            "jsdiff has a Denial of Service vulnerability in parsePatch and applyPatch"
+          ],
+          "fix_available": true
+        },
+        {
+          "name": "quill",
+          "severity": "moderate",
+          "titles": [
+            "Cross-site Scripting in quill"
+          ],
+          "fix_available": true
+        },
+        {
+          "name": "react-quill",
+          "severity": "moderate",
+          "titles": [
+            "quill"
+          ],
+          "fix_available": true
+        }
+      ]
+    }
+  },
+  "syntax_check": {
+    "checked": 59,
+    "failures": []
+  },
+  "sink_scan": {
+    "findings": [
+      {
+        "sink": "child_process",
+        "file": "server/config/documentPolicy.js",
+        "line": 220,
+        "text": "const { spawn } = await import('node:child_process');"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/config/strategyIndex.js",
+        "line": 195,
+        "text": "while ((m = re.exec(content)) !== null) {"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/xlsxRead.js",
+        "line": 33,
+        "text": "while ((m = siRe.exec(xml)) !== null) {"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/xlsxRead.js",
+        "line": 38,
+        "text": "while ((tm = tRe.exec(inner)) !== null) text += decodeXml(tm[1]);"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/xlsxRead.js",
+        "line": 48,
+        "text": "while ((rm = rowRe.exec(xml)) !== null) {"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/xlsxRead.js",
+        "line": 52,
+        "text": "while ((cm = cRe.exec(rm[1])) !== null) {"
+      },
+      {
+        "sink": "exec_shell",
+        "file": "server/xlsxRead.js",
+        "line": 63,
+        "text": "while ((tm = tRe.exec(body)) !== null) value += decodeXml(tm[1]);"
+      },
+      {
+        "sink": "innerhtml",
+        "file": "src/components/ui/chart.jsx",
+        "line": 61,
+        "text": "dangerouslySetInnerHTML={{"
+      }
+    ],
+    "count": 8
+  },
+  "gate": {
+    "open_critical_or_high": 0,
+    "pass": true,
+    "policy": "No open critical or high advisories in the dependency tree at go-live."
+  }
+}

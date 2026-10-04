@@ -1,0 +1,31 @@
+{
+  "version": "NFR-05.1",
+  "rehearsed_at": "2026-09-27T09:24:18.035Z",
+  "container": "dealforge-db-1",
+  "source_db": "dealforge",
+  "scratch_db": "dealforge_restore_test",
+  "backup_ms": 2547,
+  "dump_bytes": 39148107,
+  "source_counts": {
+    "entity_record": 16610,
+    "audit_event": 106098
+  },
+  "restore_ms": 4588,
+  "restored_counts": {
+    "entity_record": 16610,
+    "audit_event": 106098
+  },
+  "match": true,
+  "rto_seconds": 5,
+  "rto_target_seconds": 28800,
+  "rpo_target_hours": 24,
+  "rpo_note": "RPO is a schedule property (nightly pg_dump + uploads/object sync to off-host storage), not measured by this rehearsal.",
+  "verified": true,
+  "gate": {
+    "pass": true,
+    "policy": "A scratch-database restore must reproduce every verified table count and finish within the RTO target.",
+    "counts_match": true,
+    "within_rto": true
+  },
+  "elapsed_ms": 7698
+}

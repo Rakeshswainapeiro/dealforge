@@ -1,0 +1,399 @@
+{
+  "name": "MergerSimulation",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Simulation name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Simulation description"
+    },
+    "market_definition": {
+      "type": "object",
+      "properties": {
+        "product_market": {
+          "type": "string",
+          "description": "Product market definition"
+        },
+        "geographic_market": {
+          "type": "string",
+          "description": "Geographic market definition"
+        },
+        "time_window": {
+          "type": "string",
+          "description": "Analysis time period"
+        },
+        "currency": {
+          "type": "string",
+          "default": "USD",
+          "description": "Currency for financial values"
+        },
+        "multi_market": {
+          "type": "boolean",
+          "default": false,
+          "description": "Multiple markets analysis"
+        }
+      }
+    },
+    "baseline_data": {
+      "type": "object",
+      "properties": {
+        "prices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "firm_id": {
+                "type": "string"
+              },
+              "product_name": {
+                "type": "string"
+              },
+              "price": {
+                "type": "number"
+              },
+              "quantity": {
+                "type": "number"
+              },
+              "margin": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "capacity_data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "firm_id": {
+                "type": "string"
+              },
+              "capacity": {
+                "type": "number"
+              },
+              "utilization": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "elasticities": {
+          "type": "object",
+          "properties": {
+            "own_price": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "cross_price": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "diversion_matrix": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "description": "Normalized diversion ratios"
+        }
+      }
+    },
+    "demand_model": {
+      "type": "object",
+      "properties": {
+        "model_type": {
+          "type": "string",
+          "enum": [
+            "log_linear",
+            "aids",
+            "linear_aids"
+          ],
+          "default": "log_linear"
+        },
+        "quality_controls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pricing_model": {
+      "type": "string",
+      "enum": [
+        "bertrand",
+        "cournot",
+        "multi_period"
+      ],
+      "default": "bertrand",
+      "description": "Competition model"
+    },
+    "merger_parties": {
+      "type": "object",
+      "properties": {
+        "acquirer_id": {
+          "type": "string"
+        },
+        "target_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unilateral_effects": {
+      "type": "object",
+      "properties": {
+        "upp_guppi": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "product": {
+                "type": "string"
+              },
+              "upp": {
+                "type": "number"
+              },
+              "guppi": {
+                "type": "number"
+              },
+              "cmcr": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "predicted_changes": {
+          "type": "object",
+          "properties": {
+            "delta_price": {
+              "type": "number"
+            },
+            "delta_quantity": {
+              "type": "number"
+            },
+            "delta_revenue": {
+              "type": "number"
+            },
+            "delta_profit": {
+              "type": "number"
+            },
+            "delta_consumer_surplus": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "coordinated_effects": {
+      "type": "object",
+      "properties": {
+        "parallel_pricing_score": {
+          "type": "number"
+        },
+        "transparency_score": {
+          "type": "number"
+        },
+        "capacity_tightness": {
+          "type": "number"
+        },
+        "interaction_frequency": {
+          "type": "number"
+        },
+        "coordination_risk_index": {
+          "type": "number"
+        }
+      }
+    },
+    "efficiencies": {
+      "type": "object",
+      "properties": {
+        "variable_cost_reduction": {
+          "type": "number"
+        },
+        "fixed_cost_synergies": {
+          "type": "number"
+        },
+        "pass_through_rate": {
+          "type": "number",
+          "default": 0.5
+        }
+      }
+    },
+    "remedies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "structural",
+              "behavioral"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "divested_products": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "price_caps": {
+            "type": "object"
+          },
+          "impact_on_results": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "capacity_entry": {
+      "type": "object",
+      "properties": {
+        "expansion_scenarios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "firm_id": {
+                "type": "string"
+              },
+              "capacity_increase": {
+                "type": "number"
+              },
+              "timeline_months": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sensitivity_analysis": {
+      "type": "object",
+      "properties": {
+        "margin_range": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "elasticity_range": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "monte_carlo_runs": {
+          "type": "number",
+          "default": 1000
+        },
+        "results": {
+          "type": "object",
+          "properties": {
+            "p50_price_change": {
+              "type": "number"
+            },
+            "p90_price_change": {
+              "type": "number"
+            },
+            "p50_cs_change": {
+              "type": "number"
+            },
+            "p90_cs_change": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "assumptions_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number"
+          },
+          "author": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "changes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "running",
+        "completed",
+        "archived"
+      ],
+      "default": "draft"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "organization",
+        "group"
+      ],
+      "default": "private"
+    },
+    "shared_with_groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "creator_organization": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": {
+      "created_by": "{{user.email}}"
+    },
+    "read": {
+      "created_by": "{{user.email}}"
+    },
+    "update": {
+      "created_by": "{{user.email}}"
+    },
+    "delete": {
+      "created_by": "{{user.email}}"
+    },
+    "write": {
+      "created_by": "{{user.email}}"
+    }
+  }
+}

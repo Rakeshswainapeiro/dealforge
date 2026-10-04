@@ -1,0 +1,222 @@
+# DealForge
+
+Developed by InfiniaTechLabs. Private repository: [InfiniaTechLabs/dealforge](https://github.com/InfiniaTechLabs/dealforge).
+
+M&A analysis and investment-screening platform. Runs entirely on your own
+machine or infrastructure with Docker — no third-party app backend required.
+
+## Architecture
+
+| Concern | Implementation |
+| --- | --- |
+| Entity data (Companies, Scenarios, Contacts, …) | **Postgres** via the server API; browser **localStorage** as offline/dev fallback |
+| Auth | **Better Auth** sessions (email/password) with multi-tenant RBAC + ABAC; Better Auth organization = tenant |
+| AI / integrations (LLM, file upload, email, SMS, images) | Local **Node/Express** API proxying an OpenAI-compatible provider |
+| Object storage (documents, evidence, generated images) | **ObjectIO / S3** when `S3_ENDPOINT` is set, local disk otherwise |
+| Data room / secure sharing | External **Coneshare** service over its REST API (optional) |
+| Backend persistence | **Postgres** (uploads + integration audit logs) |
+
+Feature code talks to a single client facade, `src/api/client.js`, with
+`api.entities` / `api.auth` / `api.integrations.Core` / `api.appLogs`. All
+components import it from `@/api/client`, so the persistence layer can move
+without touching feature code.
+
+## Authentication & access control
+
+DealForge uses **Better Auth** for identity. Every seeded application user is
+migrated into a Better Auth account with a founding credential, so the users
+that already exist (e.g. `admin@dealforge.local`) can sign in with
+`DEFAULT_USER_PASSWORD` (default `DealForge!2026`). Sessions are cookie-based and last 7
+days; the SPA gates every route behind a live session and shows the login screen
+otherwise.
+
+- **Tenant** — a Better Auth **organization** is the tenant. The existing Sirius
+  org tree (`organization` / `app_user` / `membership`) remains the RBAC source of
+  truth and is mirrored into Better Auth (org/member/user/account) on boot,
+  idempotently.
+- **RBAC** — roles come from the Sirius membership records (a user can hold
+  several), enforced server-side.
+- **ABAC** — attribute-based policies live in `abac_policy` and are evaluated on
+  read paths. Policies match actor/resource attributes (organisation,
+  geography/region, sector/industry, commitment size, related-party and flag
+  attributes) and are managed through `GET/POST/DELETE /api/abac/policies` and
+  previewed with `GET /api/abac/check`. Administrators and cross-org readers
+  (`sirius_deal_lead`, `sirius_vertical_head`, `leadership`, `cio`, `ic_member`, `board_member`,
+  `group_compliance`) short-circuit to allow.
+
+Key endpoints: `/api/auth/*` (Better Auth: sign-in, sign-out, get-session,
+organization, admin), `/api/org/*` (memberships, users, access grants) and
+ `/api/abac/*` (policies). Set `BETTER_AUTH_SECRET` in production.
+
+### Super-admin console
+
+The **Super Admin** page (`/SuperAdmin`, admin role only, nav: *Super Admin*)
+is the operator surface for identity and tenancy. It is backed by
+`/api/admin/*` (`server/admin.js`), which requires a live Better Auth session
+**and** the `admin` role on every route — the header/default identity fallback
+used by API scripts is deliberately not honoured here (opt back in locally with
+`ADMIN_ALLOW_HEADER_AUTH=1`).
+
+- **Overview** — user / tenant / membership / grant counts, role distribution
+  and a recent-activity feed.
+- **Users** — search, create (app user + Better Auth identity + first org
+  mapping), edit profile, set/reset password (revokes sessions), ban/unban
+  (revokes sessions) and soft-deactivate.
+- **Tenancy Map** — every user × organisation assignment rendered by
+  organisation or by user, with role badges, primary flag and cross-org grant
+  flags.
+- **Access Grants** — grant and revoke cross-organisation exceptions
+  (`read`/`write`/`sign`) with a reason.
+- **Audit** — the identity/RBAC slice of the immutable audit trail.
+
+Every mutation is written to `audit_event`. The console is togglable as the
+`SuperAdmin` page key (part of the *Admin Tools* feature group).
+
+## Feature flags (deployment-time module control)
+
+The app ships many modules; a deployment may not want all of them. Pages can be
+switched on or off as **groups**, either at deployment time or at runtime by an
+administrator (Settings). Resolution order (later wins):
+
+1. built-in defaults (`server/config/featureFlags.js` — everything on)
+2. runtime overrides persisted in AppSettings (`feature_flags`), admin-editable
+3. `FEATURE_FLAGS` env var (deployment-time, highest precedence)
+
+`FEATURE_FLAGS` is a comma-separated list of page keys: a bare key forces that
+page on, a `-pageKey` forces it off, and listing any bare key makes the list
+authoritative. Example: `FEATURE_FLAGS=Dashboard,DealPipeline,-Analytics,-CRM`.
+Curated groups (Company & Org Data, Deal Pipeline, Analytics & AI, Investment
+Themes, Simulators & Scenarios, CRM & Due Diligence, Portfolios, Admin Tools) let
+an admin flip a whole area at once. The client reads `/api/features` and hides
+disabled routes and menu entries.
+
+## Run with Docker (recommended)
+
+```bash
+git clone https://github.com/InfiniaTechLabs/dealforge.git
+cd dealforge
+cp .env.example .env      # then set OPENAI_API_KEY (and OPENAI_BASE_URL for non-OpenAI)
+docker compose up --build
+```
+
+Open <http://localhost:3001>.
+
+- `app` — Express server + built SPA, and the integration API
+- `db` — Postgres 16 (uploads metadata + LLM/email/SMS/image logs)
+- Uploaded files persist in the `uploads` Docker volume
+- Postgres data persists in the `pgdata` Docker volume
+
+AI features require `OPENAI_BASE_URL` + `OPENAI_API_KEY`. Point `OPENAI_BASE_URL`
+at any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, Groq, Together,
+LM Studio, Ollama at `http://host.docker.internal:11434/v1`, …). Without it, the
+UI still works; AI calls return a clear "backend not configured" error.
+
+## Object storage (ObjectIO / S3)
+
+Uploads and generated images are stored on the **local filesystem by default**.
+Set `S3_ENDPOINT` (plus access keys) to store them in **ObjectIO** — or any
+S3-compatible service (MinIO, Cloudflare R2, AWS S3), since ObjectIO exposes a
+wire-compatible S3 API and DealForge uses the S3 SDK.
+
+The server creates the bucket on startup if it is missing. Files are served
+through `/api/files/<key>` — a single authenticated choke point that streams
+from the object store (range requests supported; `?download=1` forces a
+download). Uploads return that app-relative URL, so frontend and AI extraction
+keep working unchanged.
+
+To run ObjectIO locally alongside DealForge:
+
+```bash
+# 1. start ObjectIO and read the admin keys it prints on first boot
+docker compose -f docker-compose.yml -f docker-compose.objectio.yml up -d objectio
+docker compose -f docker-compose.yml -f docker-compose.objectio.yml logs objectio \
+  | grep -E "Admin (access|secret) key"
+
+# 2. put them in .env, then start the stack
+#    S3_ENDPOINT=http://objectio:9000
+#    S3_ACCESS_KEY_ID=AKIA...
+#    S3_SECRET_ACCESS_KEY=...
+docker compose -f docker-compose.yml -f docker-compose.objectio.yml up -d
+```
+
+Prefer running ObjectIO on the host? Grab the `objectio-aio` binary and run
+`objectio-aio --data ~/objectio-data --auth`, then point a Dockerised DealForge
+at `S3_ENDPOINT=http://host.docker.internal:9000`.
+
+Direct-to-storage presigned URLs are available for large uploads:
+`POST /api/integrations/presign-upload` and `POST /api/integrations/presign-download`.
+
+## Data room (Coneshare)
+
+DealForge integrates an external data room **as a service over its REST API** —
+it never forks or re-implements Coneshare (see
+`docs/DealForge_Storage_and_Dataroom_Reuse_Analysis.md`). Set `CONESHARE_BASE_URL`
+and `CONESHARE_API_KEY` to enable it. DealForge owns the investment workflow,
+gates and entities; Coneshare owns secure rooms, share links, NDA, watermarking,
+page analytics and viewer Q&A.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/dataroom/health` | Connectivity + data-room count |
+| `GET /api/dataroom/datarooms` | List rooms |
+| `POST /api/dataroom/datarooms` | Create a room |
+| `POST /api/dataroom/share-links` | Create a secure share link |
+| `GET /api/dataroom/datarooms/:id/visits` | Room engagement analytics |
+
+## Local development (no Docker)
+
+```bash
+# 1. Postgres (or point DATABASE_URL at an existing instance)
+docker compose up -d db
+
+# 2. Backend API on :3001
+cd server && npm install && DATABASE_URL=postgres://dealforge:dealforge@localhost:5432/dealforge npm run dev
+
+# 3. Frontend on :5173 (proxies /api and /uploads to :3001)
+npm install
+npm run dev
+```
+
+## Scripts
+
+- `npm run dev` — Vite dev server
+- `npm run build` — production frontend build
+- `npm run lint` — ESLint
+- `npm run server` — run the API server once built in `server/`
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string |
+| `BETTER_AUTH_SECRET` | Session signing secret (required in production; `openssl rand -base64 32`) |
+| `DEFAULT_USER_PASSWORD` | Password seeded for migrated app users so they can sign in (default `DealForge!2026`) |
+| `AUTH_TRUSTED_ORIGINS` | Extra browser origins allowed to start a session (comma-separated) |
+| `FEATURE_FLAGS` | Deployment-time feature/menu visibility (comma list of page keys; `-pageKey` disables) |
+| `OPENAI_BASE_URL` | OpenAI-compatible base URL, e.g. `https://api.openai.com/v1` |
+| `OPENAI_API_KEY` | Provider API key |
+| `OPENAI_MODEL` | Model name (default `gpt-4o-mini`) |
+| `RESEND_API_KEY` | Optional; enables real email delivery via Resend |
+| `PUBLIC_BASE_URL` | Public URL used to build absolute upload links |
+| `UPLOAD_DIR` | Where uploaded files are stored when object storage is off (default `./uploads`) |
+| `S3_ENDPOINT` | ObjectIO/S3 endpoint (e.g. `http://objectio:9000`); empty = local disk |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | S3 credentials (ObjectIO admin keys) |
+| `S3_BUCKET` | Bucket name (default `dealforge`, auto-created if missing) |
+| `S3_REGION` / `S3_PREFIX` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | S3 tuning |
+| `CONESHARE_BASE_URL` / `CONESHARE_API_KEY` | External data-room service (optional) |
+| `CONESHARE_API_PATH` | Coneshare API prefix (default `/api/v1`) |
+
+## Entity data
+
+Entity data lives in the browser, so it is per-browser and cleared by clearing
+site data. Shapes are defined in `src/entities/*.json` for reference. To seed or
+export data, use the in-app UI; there is no server-side entity database.
+
+### Sample data
+
+**Settings → Sample Data → Load Sample Data** seeds a realistic demo dataset
+(Companies, Scenarios, Simulations, Deal Opportunities, Contacts, Acquirer
+Profiles, Portfolios/Holdings, Due Diligence Checklists, Users, App Settings)
+into localStorage. **Clear All Data** empties every store. The dataset is
+defined in `src/data/sampleData.js` and can be seeded programmatically with
+`api._local.seed(SAMPLE_DATA)`.

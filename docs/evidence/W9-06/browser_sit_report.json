@@ -1,0 +1,153 @@
+{
+  "version": "NFR-06.1",
+  "measured_at": "2026-09-27T09:34:00.161Z",
+  "base": "http://localhost:34010",
+  "supported_browsers": [
+    {
+      "id": "chrome",
+      "engine": "chromium",
+      "label": "Chrome (latest 2)",
+      "tested": true
+    },
+    {
+      "id": "edge",
+      "engine": "chromium",
+      "label": "Edge (latest 2)",
+      "tested": true
+    },
+    {
+      "id": "safari",
+      "engine": "webkit",
+      "label": "Safari (latest 2)",
+      "tested": false,
+      "external": true
+    }
+  ],
+  "profiles": [
+    {
+      "profile": "chrome_desktop",
+      "engine": "chromium",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "status": "pass",
+      "journeys": [
+        {
+          "id": "dashboard",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "deal_pipeline",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "screening_board",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "settings",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        }
+      ]
+    },
+    {
+      "profile": "edge_desktop",
+      "engine": "chromium",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "status": "pass",
+      "journeys": [
+        {
+          "id": "dashboard",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "deal_pipeline",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "screening_board",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "settings",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        }
+      ]
+    },
+    {
+      "profile": "tablet_ipad",
+      "engine": "chromium",
+      "viewport": {
+        "width": 820,
+        "height": 1180,
+        "isMobile": true,
+        "hasTouch": true
+      },
+      "status": "pass",
+      "journeys": [
+        {
+          "id": "dashboard",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "deal_pipeline",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "screening_board",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        },
+        {
+          "id": "settings",
+          "ok": true,
+          "detail": "rendered",
+          "errors": []
+        }
+      ]
+    },
+    {
+      "profile": "safari_desktop",
+      "engine": "webkit",
+      "status": "external",
+      "note": "WebKit is not installable in this environment; recorded as an external gap.",
+      "journeys": []
+    }
+  ],
+  "summary": {
+    "profiles_tested": 3,
+    "profiles_passed": 3,
+    "profiles_failed": 0,
+    "external": 1
+  },
+  "gate": {
+    "pass": true,
+    "policy": "Every tested viewport profile must render the core journeys with no page errors."
+  },
+  "external_note": "Safari/WebKit and a second current Chrome/Edge build are recorded as external coverage; the Chromium engine covers Chrome and Edge."
+}

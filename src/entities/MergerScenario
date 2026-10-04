@@ -1,0 +1,129 @@
+{
+  "name": "MergerScenario",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Scenario name"
+    },
+    "acquirer_id": {
+      "type": "string",
+      "description": "ID of acquiring company"
+    },
+    "target_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of target companies"
+    },
+    "deal_structure": {
+      "type": "object",
+      "properties": {
+        "cash_percentage": {
+          "type": "number",
+          "description": "Percentage of consideration in cash"
+        },
+        "stock_percentage": {
+          "type": "number",
+          "description": "Percentage of consideration in stock"
+        },
+        "premium": {
+          "type": "number",
+          "description": "Acquisition premium percentage"
+        },
+        "new_debt": {
+          "type": "number",
+          "description": "New debt to be issued in millions"
+        }
+      }
+    },
+    "synergies": {
+      "type": "object",
+      "properties": {
+        "revenue_synergies": {
+          "type": "number",
+          "description": "Annual revenue synergies in millions"
+        },
+        "cost_synergies": {
+          "type": "number",
+          "description": "Annual cost synergies in millions"
+        },
+        "integration_costs": {
+          "type": "number",
+          "description": "One-time integration costs in millions"
+        },
+        "synergy_realization_years": {
+          "type": "number",
+          "description": "Years to realize full synergies"
+        }
+      }
+    },
+    "assumptions": {
+      "type": "object",
+      "properties": {
+        "wacc": {
+          "type": "number",
+          "description": "Weighted average cost of capital"
+        },
+        "tax_rate": {
+          "type": "number",
+          "description": "Tax rate percentage"
+        },
+        "closing_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Expected closing date"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "active",
+        "completed",
+        "archived"
+      ],
+      "default": "draft",
+      "description": "Scenario status"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "organization",
+        "group"
+      ],
+      "default": "private",
+      "description": "Who can see this scenario"
+    },
+    "shared_with_groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Groups that have access to this scenario"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": {
+      "created_by": "{{user.email}}"
+    },
+    "read": {
+      "created_by": "{{user.email}}"
+    },
+    "update": {
+      "created_by": "{{user.email}}"
+    },
+    "delete": {
+      "created_by": "{{user.email}}"
+    },
+    "write": {
+      "created_by": "{{user.email}}"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "pilots": [
+    {
+      "pilot": "example-pilot",
+      "sus": 78,
+      "tasks": [
+        { "id": "login",       "success": true, "assisted": false },
+        { "id": "self_screen", "success": true, "assisted": false },
+        { "id": "capture",     "success": true, "assisted": false },
+        { "id": "documents",   "success": true, "assisted": false },
+        { "id": "draft",       "success": true, "assisted": false },
+        { "id": "sign",        "success": true, "assisted": false },
+        { "id": "status",      "success": true, "assisted": false }
+      ],
+      "issues": []
+    }
+  ]
+}

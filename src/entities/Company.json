@@ -1,0 +1,103 @@
+{
+  "name": "Company",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Company name"
+    },
+    "ticker": {
+      "type": "string",
+      "description": "Stock ticker symbol"
+    },
+    "sector": {
+      "type": "string",
+      "description": "Industry sector"
+    },
+    "revenue": {
+      "type": "number",
+      "description": "Annual revenue in millions"
+    },
+    "ebitda": {
+      "type": "number",
+      "description": "EBITDA in millions"
+    },
+    "net_income": {
+      "type": "number",
+      "description": "Net income in millions"
+    },
+    "enterprise_value": {
+      "type": "number",
+      "description": "Enterprise value in millions"
+    },
+    "market_cap": {
+      "type": "number",
+      "description": "Market capitalization in millions"
+    },
+    "shares_outstanding": {
+      "type": "number",
+      "description": "Shares outstanding in millions"
+    },
+    "stock_price": {
+      "type": "number",
+      "description": "Current stock price"
+    },
+    "total_debt": {
+      "type": "number",
+      "description": "Total debt in millions"
+    },
+    "cash": {
+      "type": "number",
+      "description": "Cash and equivalents in millions"
+    },
+    "market_share": {
+      "type": "number",
+      "description": "Market share percentage"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Additional notes"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "organization",
+        "group"
+      ],
+      "default": "private",
+      "description": "Who can see this company"
+    },
+    "shared_with_groups": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Groups that have access to this company"
+    },
+    "creator_organization": {
+      "type": "string",
+      "description": "Organization of the creator for access control"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": {
+      "created_by": "{{user.email}}"
+    },
+    "read": {
+      "created_by": "{{user.email}}"
+    },
+    "update": {
+      "created_by": "{{user.email}}"
+    },
+    "delete": {
+      "created_by": "{{user.email}}"
+    },
+    "write": {
+      "created_by": "{{user.email}}"
+    }
+  }
+}

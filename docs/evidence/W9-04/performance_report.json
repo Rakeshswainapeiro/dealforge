@@ -1,0 +1,99 @@
+{
+  "version": "NFR-04.1",
+  "measured_at": "2026-09-27T09:28:48.857Z",
+  "base": "http://localhost:34010",
+  "samples_per_endpoint": 12,
+  "targets": {
+    "p95_page_ms": 3000,
+    "screening_ms": 900000,
+    "hard_ceiling_ms": 10000,
+    "min_samples": 5
+  },
+  "endpoints": {
+    "pipeline_board": {
+      "count": 12,
+      "mean_ms": 13,
+      "p50_ms": 9.880459,
+      "p95_ms": 43.86,
+      "max_ms": 43.86,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    },
+    "pipeline_dashboard": {
+      "count": 12,
+      "mean_ms": 11,
+      "p50_ms": 10.072667,
+      "p95_ms": 13.704333,
+      "max_ms": 13.704333,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    },
+    "funnel_metrics": {
+      "count": 12,
+      "mean_ms": 4,
+      "p50_ms": 3.679209,
+      "p95_ms": 4.26025,
+      "max_ms": 4.26025,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    },
+    "reporting_weekly": {
+      "count": 12,
+      "mean_ms": 9,
+      "p50_ms": 8.711333,
+      "p95_ms": 10.207916,
+      "max_ms": 10.207916,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    },
+    "portfolio_register": {
+      "count": 12,
+      "mean_ms": 2,
+      "p50_ms": 2.274333,
+      "p95_ms": 2.775542,
+      "max_ms": 2.775542,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    },
+    "screening_panel": {
+      "count": 12,
+      "mean_ms": 6,
+      "p50_ms": 6.132375,
+      "p95_ms": 6.999834,
+      "max_ms": 6.999834,
+      "min_samples_met": true,
+      "within_p95_target": true,
+      "within_hard_ceiling": true,
+      "pass": true
+    }
+  },
+  "statuses": {
+    "pipeline_board": 200,
+    "pipeline_dashboard": 200,
+    "funnel_metrics": 200,
+    "reporting_weekly": 200,
+    "portfolio_register": 200,
+    "screening_panel": 200
+  },
+  "summary": {
+    "endpoints": 6,
+    "failing": 0
+  },
+  "gate": {
+    "pass": true,
+    "p95_target_ms": 3000,
+    "hard_ceiling_ms": 10000,
+    "policy": "Every sampled endpoint must serve a P95 under the page budget with no request over the hard ceiling."
+  },
+  "screening_note": "NFR-04 also sets a 15-minute screening SLA; that is an end-to-end analyst process budget, tracked separately from the page budget measured here."
+}
