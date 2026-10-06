@@ -21,6 +21,9 @@ services:
       - "34000:3001"
     environment:
       PORT: "3001"
+      # The image defaults to production (strict startup checks). This compose
+      # file is the LOCAL developer stack, so it runs as development.
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgres://dealforge:dealforge@db:5432/dealforge
       UPLOAD_DIR: /app/uploads
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:34000}
@@ -38,6 +41,11 @@ services:
       DEFAULT_USER_PASSWORD: ${DEFAULT_USER_PASSWORD:-DealForge!2026}
       # Extra browser origins trusted for session creation (comma-separated).
       AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-}
+      # Extra browser origins allowed by CORS (comma-separated).
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # LOCAL TESTING ONLY: lets the integration suite act as seeded users via
+      # x-user-id / x-user-email headers. Refused in production.
+      AUTH_ALLOW_HEADER_IDENTITY: ${AUTH_ALLOW_HEADER_IDENTITY:-0}
       # Deployment-time feature/menu visibility (comma list of page keys; '-' disables).
       FEATURE_FLAGS: ${FEATURE_FLAGS:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}

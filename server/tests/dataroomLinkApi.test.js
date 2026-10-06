@@ -47,7 +47,7 @@ before(async () => {
 describe('data-room link API (INTG-01)', () => {
   test('GET /api/pipeline/dataroom-providers lists the providers', async (t) => {
     if (!online) return t.skip('server offline');
-    const { status, data } = await api('/api/pipeline/dataroom-providers');
+    const { status, data } = await api('/api/pipeline/dataroom-providers', { user: 'user-admin' });
     assert.equal(status, 200);
     assert.ok(Array.isArray(data.providers));
     assert.ok(data.providers.some((p) => p.key === 'coneshare'));

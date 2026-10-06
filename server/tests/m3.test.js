@@ -975,7 +975,7 @@ describe('portfolio register (W4-01)', () => {
     for (const c of reg.data.config.companies) {
       assert.ok(c.sector && c.geography && c.cluster);
     }
-    const csv = await fetch(BASE + '/api/portfolio-register/template.csv');
+    const csv = await fetch(BASE + '/api/portfolio-register/template.csv', { headers: { 'x-user-id': 'user-deal-lead' } });
     assert.equal(csv.status, 200);
     const body = await csv.text();
     assert.ok(body.startsWith('name,legal_name,cluster,sector'));
@@ -1020,7 +1020,7 @@ describe('portfolio register (W4-01)', () => {
 
   test('the CSV template imports', async () => {
     const before = await api('/api/portfolio-register', { user: 'user-admin' });
-    const csv = await (await fetch(BASE + '/api/portfolio-register/template.csv')).text();
+    const csv = await (await fetch(BASE + '/api/portfolio-register/template.csv', { headers: { 'x-user-id': 'user-deal-lead' } })).text();
     const res = await api('/api/portfolio-register/import', { method: 'POST', user: 'user-admin', body: { csv } });
     assert.equal(res.status, 200);
     assert.equal(res.data.imported, 15);

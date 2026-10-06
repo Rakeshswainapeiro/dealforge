@@ -42,7 +42,7 @@ before(async () => {
 describe('bulk import API (INTG-03)', () => {
   test('GET /api/bulk-import/policy returns the versioned policy', async (t) => {
     if (!online) return t.skip('server offline');
-    const { status, data } = await api('/api/bulk-import/policy');
+    const { status, data } = await api('/api/bulk-import/policy', { user: 'user-admin' });
     assert.equal(status, 200);
     assert.ok(data.version);
     assert.ok(Array.isArray(data.columns) && data.columns.length > 0);
@@ -51,7 +51,7 @@ describe('bulk import API (INTG-03)', () => {
 
   test('GET /template.csv streams a CSV template', async (t) => {
     if (!online) return t.skip('server offline');
-    const res = await fetch(BASE + '/api/bulk-import/template.csv');
+    const res = await fetch(BASE + '/api/bulk-import/template.csv', { headers: { 'x-user-id': 'user-admin' } });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type') || '', /text\/csv/);
     const body = await res.text();

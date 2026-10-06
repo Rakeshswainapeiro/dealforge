@@ -53,9 +53,9 @@ organization, admin), `/api/org/*` (memberships, users, access grants) and
 The **Super Admin** page (`/SuperAdmin`, admin role only, nav: *Super Admin*)
 is the operator surface for identity and tenancy. It is backed by
 `/api/admin/*` (`server/admin.js`), which requires a live Better Auth session
-**and** the `admin` role on every route — the header/default identity fallback
-used by API scripts is deliberately not honoured here (opt back in locally with
-`ADMIN_ALLOW_HEADER_AUTH=1`).
+**and** the `admin` role on every route. Test-only header identity is not
+honoured here unless both `AUTH_ALLOW_HEADER_IDENTITY=1` and
+`ADMIN_ALLOW_HEADER_AUTH=1` are set (local tooling only; refused in production).
 
 - **Overview** — user / tenant / membership / grant counts, role distribution
   and a recent-activity feed.
@@ -177,6 +177,36 @@ npm install
 npm run dev
 ```
 
+## Access control: deny by default
+
+Every `/api` route requires a signed-in user (Better Auth session) except a
+short public list in `server/config/identityPolicy.js`: `/api/health`,
+`/api/auth/*`, `GET /api/memo-verification/verify` (QR scans) and
+`GET /api/i18n`. Anonymous requests get `401`. Local uploads under `/uploads`
+also require a session. In production the server refuses to start with a
+missing or default `BETTER_AUTH_SECRET`, a non-https `PUBLIC_BASE_URL`, or any
+test-only switch enabled.
+
+## Running the server tests
+
+The integration tests run against a live server and act as seeded users via
+the `x-user-id` header, which is only honoured when explicitly enabled:
+
+```bash
+# terminal 1 - API with test identity enabled
+cd server
+AUTH_ALLOW_HEADER_IDENTITY=1 RATE_LIMIT_DISABLED=1 npm run dev
+
+# terminal 2 - repo root
+BASE_URL=http://localhost:3001 RATE_LIMIT_DISABLED=1 \
+DATABASE_URL=postgres://dealforge:dealforge@localhost:34001/dealforge \
+  node --test --test-concurrency=1 server/tests/*.test.js
+```
+
+`DATABASE_URL` lets `authDenyByDefault.test.js` start an isolated server with
+header identity off to prove impersonation is refused; without it that part
+is skipped.
+
 ## Scripts
 
 - `npm run dev` — Vite dev server
@@ -192,6 +222,9 @@ npm run dev
 | `BETTER_AUTH_SECRET` | Session signing secret (required in production; `openssl rand -base64 32`) |
 | `DEFAULT_USER_PASSWORD` | Password seeded for migrated app users so they can sign in (default `DealForge!2026`) |
 | `AUTH_TRUSTED_ORIGINS` | Extra browser origins allowed to start a session (comma-separated) |
+| `CORS_ALLOWED_ORIGINS` | Extra browser origins allowed by CORS (comma-separated); `PUBLIC_BASE_URL` is always allowed |
+| `AUTH_ALLOW_HEADER_IDENTITY` | **Local testing only.** `1` lets tests act as users via `x-user-id` / `x-user-email`; refused in production. Default `0`: no session means 401 |
+| `NODE_ENV` | `production` (image default) enables strict startup checks: real secret, https `PUBLIC_BASE_URL`, no test switches. Local compose files set `development` |
 | `FEATURE_FLAGS` | Deployment-time feature/menu visibility (comma list of page keys; `-pageKey` disables) |
 | `OPENAI_BASE_URL` | OpenAI-compatible base URL, e.g. `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | Provider API key |

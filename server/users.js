@@ -4,6 +4,7 @@ import { writeAudit } from './audit.js';
 import { descendantIds } from './org.js';
 import { sessionUser } from './auth.js';
 import { isUserActive, accessBlockReason } from './config/userAdmin.js';
+import { headerIdentityEnabled } from './config/identityPolicy.js';
 
 // ---------------------------------------------------------------------------
 // Users & memberships (E2.2 / REQ-RBAC-01).
@@ -107,10 +108,12 @@ export async function grantedOrgIds(userId) {
   return rows.map((r) => r.org_id);
 }
 
-// Resolve the acting identity for a request, in priority order:
+// Resolve the acting identity for a request (BRD PLT-02 / NFR-02):
 //   1. a Better Auth session (cookie or Bearer token) - the real identity layer
-//   2. x-user-id / x-user-email headers (dev/spike / integration-suite)
-// Returns null when no user can be resolved.
+//   2. x-user-id / x-user-email headers - ONLY when headerIdentityEnabled()
+//      (AUTH_ALLOW_HEADER_IDENTITY=1 outside production; local test suite)
+// Returns null when no user can be resolved. There is deliberately no default
+// user: an anonymous request is anonymous, and callers answer 401.
 export async function resolveActor(req) {
   // Prefer a live Better Auth session when one is presented (real identity).
   const session = await sessionUser(req).catch(() => null);
@@ -128,8 +131,9 @@ export async function resolveActor(req) {
     }
   }
 
-  // No session: fall back to header-based identity for the dev/integration
-  // surface (x-user-id / x-user-email), then the configured default admin.
+  // No session. Header identity is a dev/test-only convenience and is ignored
+  // unless explicitly enabled; it can never be enabled in production.
+  if (!headerIdentityEnabled(process.env)) return null;
   const headerId = req.get('x-user-id');
   const email = req.get('x-user-email');
   let userId = headerId;
@@ -137,7 +141,7 @@ export async function resolveActor(req) {
     const u = await getUserByEmail(email);
     userId = u?.id;
   }
-  if (!userId) userId = process.env.DEFAULT_USER_ID || 'user-admin';
+  if (!userId) return null;
   const { actor } = await buildActor(userId, req);
   return actor;
 }

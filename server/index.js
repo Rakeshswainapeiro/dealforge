@@ -53,6 +53,9 @@ import { runSeed } from './seedRun.js';
 import { securityHeaders, rateLimit } from './security.js';
 import { writeAudit } from './audit.js';
 import { resolveActor } from './users.js';
+import {
+  isPublicApiRoute, startupConfigErrors, allowedCorsOrigins, isCorsOriginAllowed, headerIdentityEnabled,
+} from './config/identityPolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
@@ -60,7 +63,14 @@ const PORT = Number(process.env.PORT || 3001);
 const app = express();
 app.set('trust proxy', true);
 app.use(securityHeaders());
-app.use(cors());
+// Strict CORS allow-list (NFR-02). Disallowed origins get no CORS headers, so
+// the browser blocks the response. Credentials (session cookie) are allowed
+// only for the listed origins.
+const CORS_ORIGINS = allowedCorsOrigins(process.env);
+app.use(cors({
+  origin: (origin, cb) => cb(null, isCorsOriginAllowed(origin, CORS_ORIGINS)),
+  credentials: true,
+}));
 app.use(express.json({ limit: '25mb' }));
 // Broad API ceiling; the expensive integration routes add their own tighter
 // limits inside their router (E10.1).
@@ -84,6 +94,20 @@ app.get('/api/auth/public-settings', async (_req, res) => {
   }
 });
 app.use(AUTH_BASE_PATH, authHandler);
+// Deny by default (BRD PLT-02 / NFR-02). Every /api route except the short
+// public list in config/identityPolicy.js requires an authenticated user. This
+// is the single choke point; routers keep their own checks as a second layer.
+// It also covers routers that never checked identity (e.g. /api/integrations).
+async function requireAuthenticatedUser(req, res, next) {
+  try {
+    if (req.originalUrl.startsWith('/api/') && isPublicApiRoute(req.method, req.originalUrl)) return next();
+    const actor = req.actor || await resolveActor(req);
+    if (!actor) return res.status(401).json({ error: 'Authentication required' });
+    req.actor = actor;
+    next();
+  } catch (err) { next(err); }
+}
+app.use('/api', requireAuthenticatedUser);
 // Every cross-org / permission denial inside the application API is written to
 // the immutable audit trail, so J6 ('denied at every layer; the attempt is
 // logged') holds end to end rather than only at the business-action layer.
@@ -157,7 +181,9 @@ app.use(async (req, res, next) => {
 
 // Uploaded files are served by opaque (uuid) names and never listed; block
 // dotfiles and directory indexes so the local-disk mode cannot be walked.
-app.use('/uploads', express.static(UPLOAD_DIR, { dotfiles: 'deny', index: false }));
+// Local-disk uploads require a signed-in user (NFR-02). Per-organisation
+// access checks for local files are a known gap tracked under DOC-02.
+app.use('/uploads', requireAuthenticatedUser, express.static(UPLOAD_DIR, { dotfiles: 'deny', index: false }));
 app.use('/api/files', filesRouter);
 app.use('/api/integrations', integrationsRouter);
 app.use('/api/dataroom', dataroomRouter);
@@ -231,6 +257,18 @@ app.use((err, _req, res, _next) => {
 });
 
 async function start() {
+  // Fail fast on unsafe configuration (NFR-02). In production any problem stops
+  // the process; elsewhere it is a warning so local setups keep working.
+  const configErrors = startupConfigErrors(process.env);
+  if (configErrors.length && process.env.NODE_ENV === 'production') {
+    for (const e of configErrors) console.error('[config] ' + e);
+    console.error('[config] refusing to start in production with an unsafe configuration');
+    process.exit(1);
+  }
+  for (const e of configErrors) console.warn('[config] warning: ' + e);
+  if (headerIdentityEnabled(process.env)) {
+    console.warn('[auth] header identity (x-user-id / x-user-email) is ENABLED - local testing only');
+  }
   // Initialize the database without blocking HTTP startup; the DB may still be
   // booting (docker-compose) or intentionally absent in local frontend-only dev.
   initDb()

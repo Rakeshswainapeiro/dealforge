@@ -30,6 +30,8 @@ services:
       - "34010:3001"
     environment:
       PORT: "3001"
+      # Local demo stack: development mode (the image defaults to production).
+      NODE_ENV: development
       DATABASE_URL: postgres://dealforge:dealforge@db:5432/dealforge
       UPLOAD_DIR: /app/uploads
       PUBLIC_BASE_URL: http://localhost:34010

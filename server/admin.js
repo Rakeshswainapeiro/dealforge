@@ -33,10 +33,9 @@ export const adminRouter = express.Router();
 
 adminRouter.use(async (req, res, next) => {
   try {
-    // The rest of the app falls back to a header/default identity for the
-    // dev+integration surface. The admin console must not: it is only
-    // reachable with a real Better Auth session (opt out for local tooling
-    // with ADMIN_ALLOW_HEADER_AUTH=1).
+    // The admin console requires a real Better Auth session. For local tooling
+    // only, ADMIN_ALLOW_HEADER_AUTH=1 together with AUTH_ALLOW_HEADER_IDENTITY=1
+    // lets header identity through; both are refused in production at startup.
     const session = await sessionUser(req).catch(() => null);
     req.hasSession = Boolean(session?.user?.email);
     if (!req.hasSession && process.env.ADMIN_ALLOW_HEADER_AUTH !== '1') {

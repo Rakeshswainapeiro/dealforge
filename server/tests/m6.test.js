@@ -140,7 +140,7 @@ describe('security headers (E10.1)', () => {
 
   test('uploads are served without a directory index', async (t) => {
     if (!online) return t.skip('server offline');
-    const { status } = await api('/uploads/');
+    const { status } = await api('/uploads/', { user: 'user-admin' });
     assert.ok(status === 404 || status === 403, 'expected no directory listing, got ' + status);
   });
 });
@@ -149,7 +149,7 @@ describe('upload validation (E10.1)', () => {
   test('a disallowed extension is rejected with 415', async (t) => {
     if (!online) return t.skip('server offline');
     const { status, data } = await api('/api/integrations/upload-file', {
-      method: 'POST', form: uploadForm('payload.exe', 'MZ', 'application/octet-stream'),
+      method: 'POST', user: 'user-admin', form: uploadForm('payload.exe', 'MZ', 'application/octet-stream'),
     });
     assert.equal(status, 415);
     assert.match(String(data.error || ''), /Unsupported file type/i);
@@ -158,7 +158,7 @@ describe('upload validation (E10.1)', () => {
   test('an allowed extension is accepted', async (t) => {
     if (!online) return t.skip('server offline');
     const { status, data } = await api('/api/integrations/upload-file', {
-      method: 'POST', form: uploadForm('memo.pdf', '%PDF-1.4 test', 'application/pdf'),
+      method: 'POST', user: 'user-admin', form: uploadForm('memo.pdf', '%PDF-1.4 test', 'application/pdf'),
     });
     assert.equal(status, 200);
     assert.ok(data.file_url, 'expected a stored file url');
