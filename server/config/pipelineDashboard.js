@@ -133,7 +133,7 @@ export function filterCards(cards, filters = {}, { now = new Date() } = {}) {
     if (has(f.cluster)) { const cl = clusterOf(c); if (!cl || !f.cluster.includes(cl.key)) return false; }
     if (has(f.sector) && !f.sector.includes(c.sector)) return false;
     if (has(f.state) && !f.state.includes(c.state)) return false;
-    if (has(f.owner) && !f.owner.includes(c.owner_email)) return false;
+    if (has(f.owner) && !f.owner.includes(c.sirius_owner_email || 'unassigned')) return false;
     if (!withinDate(c, f.date, now)) return false;
     return true;
   });
@@ -153,14 +153,14 @@ export function filterOptions(cards, { subsidiaryNames = {} } = {}) {
     if (cl) clusters.set(cl.key, cl.label);
     if (c.sector) sectors.add(c.sector);
     if (c.state) states.set(c.state, c.state_label || c.state);
-    if (c.owner_email) owners.add(c.owner_email);
+    owners.add(c.sirius_owner_email || 'unassigned');
   }
   return {
     entity: [...entities].map(([value, label]) => ({ value, label })),
     cluster: [...clusters].map(([value, label]) => ({ value, label })),
     sector: [...sectors].sort().map((s) => ({ value: s, label: s })),
     state: [...states].map(([value, label]) => ({ value, label })),
-    owner: [...owners].sort().map((o) => ({ value: o, label: o })),
+    owner: [...owners].sort().map((o) => ({ value: o, label: o === 'unassigned' ? 'Unassigned' : o })),
     date: DATE_PRESETS,
   };
 }
@@ -171,7 +171,8 @@ function dimensionOf(card, dim, subsidiaryNames) {
     case 'cluster': { const cl = clusterOf(card); return cl ? { value: cl.key, label: cl.label } : { value: 'other', label: 'Other' }; }
     case 'sector': return { value: card.sector || 'unspecified', label: card.sector || 'Unspecified' };
     case 'state': return { value: card.state || 'unknown', label: card.state_label || card.state || 'Unknown' };
-    case 'owner': return { value: card.owner_email || 'unassigned', label: card.owner_email || 'Unassigned' };
+    // The named Sirius owner (WF-02), not the subsidiary preparer.
+    case 'owner': return { value: card.sirius_owner_email || 'unassigned', label: card.sirius_owner_name || card.sirius_owner_email || 'Unassigned' };
     default: return { value: 'all', label: 'All' };
   }
 }

@@ -56,6 +56,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import SiriusMemoDialog from "@/components/pipeline/SiriusMemoDialog";
+import OwnerPanel from "@/components/pipeline/OwnerPanel";
 
 // ---------------------------------------------------------------------------
 // E6 — Sirius screening board.
@@ -187,8 +188,14 @@ function opportunityCard(card, { onSelect, active, t }) {
         <span className={cn("mt-1 h-2 w-2 rounded-full shrink-0", meta.dot)} aria-hidden />
       </div>
 
-      <p className="mt-1 text-xs text-slate-500 truncate">
-        {card.owner_email || "No owner"}
+      <p className="mt-1 flex items-center gap-1 text-xs text-slate-500 truncate" data-testid={"card-owner-" + card.id}>
+        {card.assigned_to_me && (
+          <span className="rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800">MINE</span>
+        )}
+        <span className="truncate">
+          {card.sirius_owner_name || (card.is_open || card.is_final ? "Unassigned" : "")}
+          {card.owner_email ? ` · from ${card.owner_email}` : ""}
+        </span>
       </p>
 
       <p className="mt-1 text-sm font-semibold text-slate-800">
@@ -317,9 +324,11 @@ export default function ScreeningBoard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // "Mine" shows what is owned by or routed to me (WF-02 / WF-03).
+  const [ownerScope, setOwnerScope] = useState("all");
   const boardQuery = useQuery({
-    queryKey: ["pipeline", "board"],
-    queryFn: () => api.pipeline.board(),
+    queryKey: ["pipeline", "board", ownerScope],
+    queryFn: () => api.pipeline.board(ownerScope),
   });
 
   const awaitingQuery = useQuery({
@@ -739,6 +748,8 @@ export default function ScreeningBoard() {
             Create Sirius memo
           </Button>
         </SheetHeader>
+
+        <OwnerPanel card={selectedCard} />
 
         {/* Data-room folder link (W8-04 / BRD INTG-01). */}
         <div className="mt-6 rounded-lg border border-slate-200 p-3" data-testid="dataroom-link-panel">
@@ -1937,6 +1948,20 @@ export default function ScreeningBoard() {
 
           {/* Board ---------------------------------------------------------- */}
           <TabsContent value="board">
+            <div className="mb-3 flex flex-wrap items-center gap-2" data-testid="board-owner-scope">
+              {[["all", "All"], ["me", "Mine"], ["unassigned", "Unassigned"]].map(([key, label]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={ownerScope === key ? "default" : "outline"}
+                  className="h-7 text-xs"
+                  onClick={() => setOwnerScope(key)}
+                  data-testid={"board-owner-" + key}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
             {boardQuery.isLoading ? (
               <div className="flex items-center gap-2 text-slate-500">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading the board...

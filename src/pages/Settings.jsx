@@ -21,6 +21,7 @@ import { Scale } from "lucide-react";
 import { navItemEnabled } from '@/lib/features';
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import RoutingRulesPanel from "@/components/settings/RoutingRulesPanel";
 import { Badge } from "@/components/ui/badge";
 
 // Human labels for the template-library categories (W5-05 / DOC-06), mirroring
@@ -1107,6 +1108,10 @@ Simulate a simple validation check and return whether the connection would be su
             <TabsTrigger value="delegation" className="flex items-center gap-2 w-full justify-start px-3 py-2 text-left">
               <Scale className="w-4 h-4" />
               Delegation of Authority
+            </TabsTrigger>
+            <TabsTrigger value="routing" className="flex items-center gap-2 w-full justify-start px-3 py-2 text-left">
+              <Scale className="w-4 h-4" />
+              Owner &amp; Routing
             </TabsTrigger>
             <TabsTrigger value="related-party" className="flex items-center gap-2 w-full justify-start px-3 py-2 text-left">
               <ShieldAlert className="w-4 h-4" />
@@ -3241,6 +3246,10 @@ Simulate a simple validation check and return whether the connection would be su
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="routing" className="flex-1 min-w-0 mt-0">
+            <RoutingRulesPanel />
           </TabsContent>
 
           <TabsContent value="delegation" className="flex-1 min-w-0 mt-0">

@@ -1576,3 +1576,75 @@ describe('segregation of duties on reviewer actions (SCR-09)', () => {
     assert.ok(after.data.scorecard, 'the scorecard survives');
   });
 });
+
+describe('named owner and reviewer routing (WF-02 / WF-03)', () => {
+  test('a submission is assigned a named Sirius owner and reviewers by rule, audited and notified', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const rec = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-admin' });
+    assert.equal(rec.data.sirius_owner_email, 'deal.lead@sirius.local', 'the standard rule routes to a Sirius deal lead');
+    assert.equal(rec.data.sirius_owner_rule, 'standard');
+    assert.ok(rec.data.assigned_reviewers.length >= 1, 'a vertical head is routed as reviewer');
+    assert.ok(rec.data.assigned_reviewers.every((r) => r.email.endsWith('@sirius.local')));
+    const audit = await api('/api/audit?entity=DealOpportunity&entity_id=' + draft.id, { user: 'user-admin' });
+    assert.ok(audit.data.some((e) => e.action === 'owner_assigned'));
+    const notes = await api('/api/notifications?all=1&channels=all&limit=300', { user: 'user-admin' });
+    assert.ok(notes.data.items.some((n) => n.entity_id === draft.id && n.kind === 'assignment' && n.recipient_email === 'deal.lead@sirius.local'));
+  });
+
+  test('the owner shows on the card, and "mine" filters the board', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const mine = await api('/api/pipeline/board?owner=me', { user: 'user-sirius-deal-lead' });
+    const card = mine.data.columns.flatMap((c) => c.items).find((i) => i.id === draft.id);
+    assert.ok(card, 'the owner sees it under "mine"');
+    assert.equal(card.assigned_to_me, true);
+    assert.equal(card.sirius_owner_email, 'deal.lead@sirius.local');
+    const cio = await api('/api/pipeline/board?owner=me', { user: 'user-cio' });
+    assert.ok(!cio.data.columns.flatMap((c) => c.items).some((i) => i.id === draft.id), 'not routed to the CIO');
+  });
+
+  test('a committee-size ticket routes to a vertical head with the CIO as reviewer', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead', { ...FULL_FIELDS, total_commitment_aed: 400, ask_aed: 200 });
+    const rec = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-admin' });
+    assert.equal(rec.data.sirius_owner_rule, 'committee');
+    assert.ok(['vertical.head@sirius.local', 'fahad@sirius.local', 'aj@sirius.local'].includes(rec.data.sirius_owner_email));
+    assert.ok(rec.data.assigned_reviewers.some((r) => r.email === 'cio@sirius.local'));
+  });
+
+  test('re-assignment needs a lead or the owner, a reason and a Sirius team member', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const url = '/api/routing/opportunities/' + draft.id + '/owner';
+    const subsidiary = await api(url, { method: 'POST', user: 'user-deal-lead', body: { email: 'cio@sirius.local', reason: 'Taking it myself' } });
+    assert.equal(subsidiary.status, 403);
+    const noReason = await api(url, { method: 'POST', user: 'user-vertical-head', body: { email: 'cio@sirius.local' } });
+    assert.equal(noReason.status, 400);
+    const notTeam = await api(url, { method: 'POST', user: 'user-vertical-head', body: { email: 'deal.lead@infinia.local', reason: 'Wrong person' } });
+    assert.equal(notTeam.status, 422);
+    const ok = await api(url, { method: 'POST', user: 'user-vertical-head', body: { email: 'cio@sirius.local', reason: 'CIO to own the strategic case' } });
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal(ok.data.previous_owner_email, 'deal.lead@sirius.local');
+    const rec = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-admin' });
+    assert.equal(rec.data.sirius_owner_email, 'cio@sirius.local');
+    assert.equal(rec.data.sirius_owner_rule, 'manual');
+    // The owner field cannot be written through the record API.
+    const direct = await api('/api/entities/DealOpportunity/' + draft.id, { method: 'PUT', user: 'user-admin', body: { sirius_owner_email: 'x@sirius.local' } });
+    assert.equal(direct.status, 409);
+  });
+
+  test('the routing rules are admin-configurable and validated', async (t) => {
+    if (!online) return t.skip('server offline');
+    const read = await api('/api/routing', { user: 'user-sirius-deal-lead' });
+    assert.equal(read.status, 200);
+    assert.equal(read.data.valid, true);
+    const denied = await api('/api/routing', { method: 'PUT', user: 'user-sirius-deal-lead', body: { rules: [] } });
+    assert.equal(denied.status, 403);
+    const invalid = await api('/api/routing', { method: 'PUT', user: 'user-admin', body: { rules: [{ key: 'x', when: {}, owner_role: 'subsidiary_ceo' }] } });
+    assert.equal(invalid.status, 400);
+    const owners = await api('/api/routing/owners', { user: 'user-sirius-deal-lead' });
+    assert.ok(owners.data.owners.some((o) => o.email === 'cio@sirius.local'));
+    assert.ok(!owners.data.owners.some((o) => o.email.endsWith('@infinia.local')));
+  });
+});

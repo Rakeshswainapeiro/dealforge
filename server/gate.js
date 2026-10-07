@@ -108,7 +108,9 @@ import {
   STATE_KEYS, EDITABLE_STATES, OPEN_STATES, REVIEWER_ROLES, normalizeState, isEditableState, isFinalState,
   isProducerFor, isReviewer, isAdmin,
 } from './config/workflowStates.js';
-import { withLockedOpportunity, recordSteps, submitSteps } from './lifecycle.js';
+import { withLockedOpportunity, recordSteps, submitSteps, submitHooks, runAfterSubmit, onSubmit } from './lifecycle.js';
+
+export { onSubmit };
 import {
   QUALITY_SCORE_CONFIG_KEY, QUALITY_WEIGHT_TOTAL,
   defaultQualityScoreConfig, resolveQualityScoreConfig, validateQualityScoreConfig,
@@ -1327,14 +1329,6 @@ export function submissionBlocker(gate, state) {
   return null;
 }
 
-// Hooks run inside the submit transaction (e.g. the Sirius owner assignment,
-// WF-02) and after it commits. Registered by modules that must not be imported
-// here to avoid a cycle.
-const submitHooks = { inTransaction: [], afterCommit: [] };
-export function onSubmit({ inTransaction = null, afterCommit = null } = {}) {
-  if (inTransaction) submitHooks.inTransaction.push(inTransaction);
-  if (afterCommit) submitHooks.afterCommit.push(afterCommit);
-}
 
 /**
  * Submit a draft for screening (WF-01, DOC-03). The record is locked, the full
@@ -1410,9 +1404,7 @@ export async function submitForScreening(opportunityId, actor, { comment = null 
       deliver: false,
     }).catch((err) => console.warn('[gate] below-floor escalation notify failed:', err.message));
   }
-  for (const hook of submitHooks.afterCommit) {
-    await Promise.resolve().then(() => hook({ row, actor, gate })).catch((err) => console.warn('[gate] submit hook failed:', err.message));
-  }
+  await runAfterSubmit({ row, actor, gate });
   return {
     ok: true,
     state: row.data.status,

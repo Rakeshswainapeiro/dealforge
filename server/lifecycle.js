@@ -107,6 +107,22 @@ export function submitSteps(fromState, actor, { comment = null } = {}) {
   return steps;
 }
 
+// Hooks run inside every submit transaction (e.g. the Sirius owner assignment,
+// WF-02) and after it commits (its notification). Registered by modules that
+// cannot be imported here without a cycle. An inTransaction hook receives
+// { client, row, actor, gate } and returns fields to merge into the record.
+export const submitHooks = { inTransaction: [], afterCommit: [] };
+export function onSubmit({ inTransaction = null, afterCommit = null } = {}) {
+  if (inTransaction) submitHooks.inTransaction.push(inTransaction);
+  if (afterCommit) submitHooks.afterCommit.push(afterCommit);
+}
+
+export async function runAfterSubmit(args) {
+  for (const hook of submitHooks.afterCommit) {
+    await Promise.resolve().then(() => hook(args)).catch((err) => console.warn('[submit] hook failed:', err.message));
+  }
+}
+
 /**
  * Submit without the interactive gate, for trusted loaders only: the sample
  * seed and the admin bulk import of deals already in flight (INTG-03). The
@@ -117,13 +133,13 @@ export async function systemSubmit(opportunityId, actor, { comment = null } = {}
     const state = normalizeState(row.data?.status);
     if (state !== 'draft') throw httpError(409, 'Only a draft opportunity can be submitted', { state });
     const now = new Date().toISOString();
-    const merged = await recordSteps(client, row, submitSteps(state, actor, { comment }), {
-      patch: { submitted_at: now, submitted_by: actor.email }, actor,
-    });
+    const patch = { submitted_at: now, submitted_by: actor.email };
+    for (const hook of submitHooks.inTransaction) Object.assign(patch, await hook({ client, row, actor, gate: null }) || {});
+    const merged = await recordSteps(client, row, submitSteps(state, actor, { comment }), { patch, actor });
     await writeAudit({ client, entity: OPPORTUNITY_ENTITY, entityId: row.id, action: 'submit', actor, orgId: row.owner_org_id,
       before: { status: state }, after: { status: merged.status }, comment });
     return { ...row, data: merged };
-  });
+  }).then(async (row) => { await runAfterSubmit({ row, actor, gate: null }); return row; });
 }
 
 function addDays(days) {
@@ -321,4 +337,4 @@ async function notifyDecision(result, actor) {
   });
 }
 
-export default { withLockedOpportunity, recordSteps, submitSteps, systemSubmit, transitionOpportunity, SYSTEM_ACTOR };
+export default { withLockedOpportunity, recordSteps, submitSteps, systemSubmit, transitionOpportunity, onSubmit, SYSTEM_ACTOR };

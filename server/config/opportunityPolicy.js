@@ -29,6 +29,7 @@ export const SYSTEM_FIELDS = Object.freeze([
   'gate1_authority', 'related_party_overlay', 'legacy_status',
   'decision_reason', 'decision_reason_label', 'decision_reason_text', 'decision_reason_class',
   'decision_reason_by', 'decision_reason_at',
+  'assigned_reviewers', 'routing_flags',
   'owner_org_id', 'created_by', 'updated_by', 'created_date', 'updated_date',
 ]);
 

@@ -23,7 +23,7 @@ const card = (over = {}) => ({
   owner_org_name: 'Infinia Technologies Limited',
   opportunity_name: 'Vision Care Imaging Platform',
   sector: 'Healthcare',
-  state: 'screening',
+  state: 'screening_review',
   state_label: 'Screening',
   owner_email: 'deal.lead@infinia.local',
   total_commitment_aed: 125,
@@ -64,21 +64,21 @@ describe('pipeline dashboard config (W7-02)', () => {
 
 describe('pipeline dashboard filters (W7-02)', () => {
   test('parseFilters normalises comma lists and drops "any" dates', () => {
-    const f = parseFilters({ entity: 'a,b', state: 'screening', date: 'any' });
+    const f = parseFilters({ entity: 'a,b', state: 'screening_review', date: 'any' });
     assert.deepEqual(f.entity, ['a', 'b']);
-    assert.deepEqual(f.state, ['screening']);
+    assert.deepEqual(f.state, ['screening_review']);
     assert.equal(f.date, null);
   });
 
   test('filterCards narrows by entity, sector, stage and owner', () => {
     const cards = [
-      card({ owner_org_id: 'org-a', sector: 'Healthcare', state: 'screening', owner_email: 'x@a.local' }),
-      card({ owner_org_id: 'org-b', sector: 'Energy', state: 'approval', owner_email: 'y@b.local' }),
+      card({ owner_org_id: 'org-a', sector: 'Healthcare', state: 'screening_review', sirius_owner_email: 'x@sirius.local' }),
+      card({ owner_org_id: 'org-b', sector: 'Energy', state: 'proceed_to_gate2', sirius_owner_email: 'y@sirius.local' }),
     ];
     assert.equal(filterCards(cards, { entity: ['org-a'] }).length, 1);
     assert.equal(filterCards(cards, { sector: ['Energy'] }).length, 1);
-    assert.equal(filterCards(cards, { state: ['approval'] }).length, 1);
-    assert.equal(filterCards(cards, { owner: ['x@a.local'] }).length, 1);
+    assert.equal(filterCards(cards, { state: ['proceed_to_gate2'] }).length, 1);
+    assert.equal(filterCards(cards, { owner: ['x@sirius.local'] }).length, 1);
     assert.equal(filterCards(cards, {}).length, 2);
   });
 
@@ -97,8 +97,8 @@ describe('pipeline dashboard filters (W7-02)', () => {
 
   test('filterOptions surfaces only the values present in the cards', () => {
     const cards = [
-      card({ owner_org_id: 'org-a', sector: 'Healthcare', state: 'screening' }),
-      card({ owner_org_id: 'org-b', sector: 'Energy', state: 'approval' }),
+      card({ owner_org_id: 'org-a', sector: 'Healthcare', state: 'screening_review' }),
+      card({ owner_org_id: 'org-b', sector: 'Energy', state: 'proceed_to_gate2' }),
     ];
     const opts = filterOptions(cards, { subsidiaryNames: { 'org-a': 'Alpha Ltd', 'org-b': 'Beta Ltd' } });
     assert.equal(opts.entity.length, 2);
@@ -108,21 +108,21 @@ describe('pipeline dashboard filters (W7-02)', () => {
   });
 
   test('drillDown groups the filtered cards by a dimension', () => {
-    const cards = [card({ state: 'screening' }), card({ state: 'screening' }), card({ state: 'approval' })];
+    const cards = [card({ state: 'screening_review' }), card({ state: 'screening_review' }), card({ state: 'proceed_to_gate2' })];
     const dd = drillDown(cards, 'state');
     assert.equal(dd.dimension, 'state');
-    const screening = dd.groups.find((g) => g.key === 'screening');
+    const screening = dd.groups.find((g) => g.key === 'screening_review');
     assert.equal(screening.count, 2);
     assert.equal(dd.groups[0].count, 2, 'the largest group sorts first');
     assert.ok(DRILLDOWN_DIMENSIONS.includes('cluster'));
   });
 
   test('summarizePipeline counts totals, stages and breaches', () => {
-    const cards = [card({ state: 'screening', sla_breached: true }), card({ state: 'approval' })];
+    const cards = [card({ state: 'screening_review', sla_breached: true }), card({ state: 'proceed_to_gate2' })];
     const s = summarizePipeline(cards);
     assert.equal(s.total, 2);
     assert.equal(s.breaches, 1);
-    assert.equal(s.by_state.screening, 1);
+    assert.equal(s.by_state.screening_review, 1);
   });
 
   test('activeFilterCount counts only set dimensions', () => {

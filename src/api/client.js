@@ -911,8 +911,8 @@ const pipeline = {
     return serverFetch('/api/pipeline/states');
   },
 
-  board() {
-    return serverFetch('/api/pipeline/board');
+  board(owner) {
+    return serverFetch('/api/pipeline/board' + (owner && owner !== 'all' ? `?owner=${encodeURIComponent(owner)}` : ''));
   },
 
   awaitingMyReview() {
@@ -1766,7 +1766,22 @@ const memoVerification = {
   },
 };
 
+// Named owner and reviewer routing (WF-02 / WF-03).
+const routing = {
+  get() { return serverFetch('/api/routing'); },
+  save(config) { return serverFetch('/api/routing', { method: 'PUT', body: JSON.stringify(config) }); },
+  history() { return serverFetch('/api/routing/history'); },
+  owners() { return serverFetch('/api/routing/owners'); },
+  preview(opportunityId) { return serverFetch(`/api/routing/preview/${encodeURIComponent(opportunityId)}`); },
+  reassign(opportunityId, email, reason) {
+    return serverFetch(`/api/routing/opportunities/${encodeURIComponent(opportunityId)}/owner`, {
+      method: 'POST', body: JSON.stringify({ email, reason }),
+    });
+  },
+};
+
 export const api = {
+  routing,
   entities,
   auth,
   features,

@@ -136,6 +136,7 @@ export function columnValue(key, card, subsidiaryNames = {}) {
     case 'geography': return card.geography || '';
     case 'total_commitment_mn': return card.total_commitment_aed == null ? '' : Number(card.total_commitment_aed);
     case 'state_label': return card.state_label || card.state || '';
+    case 'sirius_owner': return card.sirius_owner_name || card.sirius_owner_email || 'Unassigned';
     case 'owner_email': return card.owner_email || '';
     case 'age_days': return card.age_days == null ? '' : card.age_days;
     case 'sla_days': return card.sla_days == null ? '' : card.sla_days;

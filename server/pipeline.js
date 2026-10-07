@@ -121,6 +121,11 @@ function opportunityToCard(row, slaByState, actor = null, doaConfig = null, rpCo
     owner_email: data.owner_email || data.submitted_by || null,
     sirius_owner_email: data.sirius_owner_email || null,
     sirius_owner_name: data.sirius_owner_name || null,
+    sirius_owner_rule: data.sirius_owner_rule || null,
+    assigned_reviewers: Array.isArray(data.assigned_reviewers) ? data.assigned_reviewers : [],
+    assigned_to_me: Boolean(actor?.email) && (
+      String(data.sirius_owner_email || '').toLowerCase() === String(actor.email).toLowerCase()
+      || (Array.isArray(data.assigned_reviewers) && data.assigned_reviewers.some((r) => String(r.email).toLowerCase() === String(actor.email).toLowerCase()))),
     state,
     state_label: STATE_LABELS[state] || state,
     legacy_state: data.status && data.status !== state ? data.status : null,
@@ -193,12 +198,21 @@ async function cardsFor(actor, rows) {
 }
 
 // Screening board: items by state with owner, age and SLA breach (WF-01/02).
-export async function screeningBoard(actor) {
+// owner filter: 'me' (owned by or routed to me), 'unassigned', or an email.
+function ownerFilter(owner, actor) {
+  const want = String(owner || '').trim().toLowerCase();
+  if (!want || want === 'all') return () => true;
+  if (want === 'me') return (c) => c.assigned_to_me;
+  if (want === 'unassigned') return (c) => !c.sirius_owner_email;
+  return (c) => String(c.sirius_owner_email || '').toLowerCase() === want;
+}
+
+export async function screeningBoard(actor, { owner } = {}) {
   const slaByState = await getSlaTargets();
   const doaConfig = await loadDoaConfig();
   const rpConfig = await loadRelatedPartyConfigForCards();
   const rows = await readableOpportunities(actor, { states: BOARD_STATES });
-  const cards = await cardsFor(actor, rows);
+  const cards = (await cardsFor(actor, rows)).filter(ownerFilter(owner, actor));
   // Cross-group duplicate warnings are shown to the Investment Team only
   // (INT-12): a subsidiary preparer never sees a sibling's item.
   if (isCrossOrgReader(actor.membership)) {
@@ -254,8 +268,11 @@ export async function screeningBoard(actor) {
 export async function awaitingMyReview(actor) {
   const rows = await readableOpportunities(actor, { states: OPEN_STATES });
   const cards = await cardsFor(actor, rows);
-  const actionable = cards.filter((c) => c.available_actions.some((a) => a.allowed && a.action !== 'withdraw'));
-  return { items: actionable, total: actionable.length };
+  const actionable = cards
+    .filter((c) => c.available_actions.some((a) => a.allowed && a.action !== 'withdraw'))
+    // What is routed to me first, then the most overdue.
+    .sort((a, b) => (Number(b.assigned_to_me) - Number(a.assigned_to_me)) || ((b.age_days ?? 0) - (a.age_days ?? 0)));
+  return { items: actionable, total: actionable.length, assigned_to_me: actionable.filter((c) => c.assigned_to_me).length };
 }
 
 // Subsidiary "my opportunities & status" (DSH-02).
@@ -370,7 +387,7 @@ pipelineRouter.get('/states', async (_req, res) => {
 });
 
 pipelineRouter.get('/board', async (req, res) => {
-  try { res.json(await screeningBoard(req.actor)); } catch (err) { sendErr(res, err); }
+  try { res.json(await screeningBoard(req.actor, { owner: req.query.owner })); } catch (err) { sendErr(res, err); }
 });
 
 pipelineRouter.get('/awaiting-my-review', async (req, res) => {

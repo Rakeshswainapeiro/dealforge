@@ -1203,7 +1203,7 @@ describe('IHC weekly report (W7-01 / DSH-03)', () => {
     assert.equal(res.status, 200, JSON.stringify(res.data));
     const keys = res.data.columns.map((c) => c.key);
     assert.deepEqual(keys, ['ref', 'subsidiary', 'opportunity_name', 'opportunity_type', 'sector', 'geography',
-      'total_commitment_mn', 'state_label', 'owner_email', 'age_days', 'sla_days', 'sla_breached', 'decision', 'updated_date']);
+      'total_commitment_mn', 'state_label', 'sirius_owner', 'owner_email', 'age_days', 'sla_days', 'sla_breached', 'decision', 'updated_date']);
     assert.ok(res.data.summary && 'total' in res.data.summary);
   });
 
@@ -1213,7 +1213,7 @@ describe('IHC weekly report (W7-01 / DSH-03)', () => {
     assert.equal(res.status, 200, JSON.stringify(res.data));
     assert.equal(res.data.valid, true);
     assert.equal(res.data.config.schedule.weekday, 5);
-    assert.equal(res.data.all_columns.length, 14);
+    assert.equal(res.data.all_columns.length, 15);
   });
 
   test('a deal lead cannot change the configuration (403)', async (t) => {
