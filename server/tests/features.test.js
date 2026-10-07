@@ -67,16 +67,17 @@ describe('feature flags', () => {
     assert.ok(data.error);
   });
 
-  test('admin can persist and read back feature overrides', async (t) => {
+  test('admin can switch a later-phase page on and read it back', async (t) => {
     if (!online) return t.skip('server offline');
-    const overrides = { MergerSimulator: false };
+    const before = await api('/api/features', { user: 'user-admin' });
+    assert.equal(before.data.features.Portfolios, false, 'later-phase page is off by default');
     const put = await api('/api/features', {
       method: 'PUT',
       user: 'user-admin',
-      body: { features: overrides },
+      body: { features: { Portfolios: true } },
     });
     assert.equal(put.status, 200);
-    assert.ok(put.data.features.MergerSimulator === false);
+    assert.equal(put.data.features.Portfolios, true);
     // Restore so other suites are unaffected.
     await api('/api/features', {
       method: 'PUT',

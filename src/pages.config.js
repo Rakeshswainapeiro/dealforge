@@ -1,20 +1,22 @@
-import Analytics from './pages/Analytics';
-import CRM from './pages/CRM';
-import Companies from './pages/Companies';
+// Routable pages. Phase 1 scope follows DealForge_Phase1_BRD_v2.
+//
+// Later-phase pages are kept in the code but switched OFF by default in
+// server/config/featureFlags.js, so they disappear from the menu and routes
+// until an admin turns them on (Settings > Features) or FEATURE_FLAGS lists them:
+//   - DueDiligence: Gate 3 diligence (BRD WF-09, Phase 2)
+//   - Portfolios: post-investment tracking (BRD DSH-05, Phase 4)
+//
+// Dashboard is not a Phase 1 screen and is no longer in the menu or the landing
+// page. It stays routable only because it is the PLT-06 RTL demonstration
+// screen (server/config/i18nData.js RTL_DEMO_SCREEN) until that demo moves to a
+// Phase 1 screen.
 import Dashboard from './pages/Dashboard';
-import DealPipeline from './pages/DealPipeline';
-import DealRecommendations from './pages/DealRecommendations';
 import DueDiligence from './pages/DueDiligence';
 import GroupStructure from './pages/GroupStructure';
-import Home from './pages/Home';
-import MarketAnalysis from './pages/MarketAnalysis';
-import MergerSimulator from './pages/MergerSimulator';
-import Scenarios from './pages/Scenarios';
 import SubmitOpportunity from './pages/SubmitOpportunity';
 import ScreeningBoard from './pages/ScreeningBoard';
 import ThemeAdmin from './pages/ThemeAdmin';
 import Settings from './pages/Settings';
-import UserManagement from './pages/UserManagement';
 import SuperAdmin from './pages/SuperAdmin';
 import Portfolios from './pages/Portfolios';
 import QandA from './pages/QandA';
@@ -26,23 +28,13 @@ import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
-    "Analytics": Analytics,
-    "CRM": CRM,
-    "Companies": Companies,
     "Dashboard": Dashboard,
-    "DealPipeline": DealPipeline,
-    "DealRecommendations": DealRecommendations,
     "DueDiligence": DueDiligence,
     "GroupStructure": GroupStructure,
-    "Home": Home,
-    "MarketAnalysis": MarketAnalysis,
-    "MergerSimulator": MergerSimulator,
-    "Scenarios": Scenarios,
     "SubmitOpportunity": SubmitOpportunity,
     "ScreeningBoard": ScreeningBoard,
     "ThemeAdmin": ThemeAdmin,
     "Settings": Settings,
-    "UserManagement": UserManagement,
     "SuperAdmin": SuperAdmin,
     "Portfolios": Portfolios,
     "QandA": QandA,
@@ -53,7 +45,9 @@ export const PAGES = {
 }
 
 export const pagesConfig = {
-    mainPage: "Dashboard",
+    // Every role lands on the Screening Board: Sirius users see the whole
+    // pipeline, subsidiary users see only their own entity's opportunities.
+    mainPage: "ScreeningBoard",
     Pages: PAGES,
     Layout: __Layout,
 };

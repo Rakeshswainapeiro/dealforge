@@ -6,18 +6,15 @@ import { useTranslation } from "@/lib/i18n";
 import { useAuth } from '@/lib/AuthContext';
 import { navItemEnabled } from '@/lib/features';
 
-import { 
-  LayoutDashboard, 
-  Building2, 
-  GitMerge, 
-  TrendingUp,
+import {
+  Building2,
+  GitMerge,
   LayoutGrid,
   Palette,
   Settings,
   User,
   Users,
   LogOut,
-  Target,
   ClipboardCheck,
   Briefcase,
   Network,
@@ -52,61 +49,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 
+// Navigation in Phase 1 workflow order (BRD v2). Items whose page is switched
+// off in server/config/featureFlags.js are hidden by navItemEnabled(), so the
+// later-phase entries at the end only appear when an admin enables them.
 const navigationItems = [
-  {
-    key: "nav.dashboard",
-    url: createPageUrl("Dashboard"),
-    page: 'Dashboard',
-    icon: LayoutDashboard,
-  },
-  {
-    key: "nav.companies",
-    url: createPageUrl("Companies"),
-    page: 'Companies',
-    icon: Building2,
-  },
-  {
-    key: "nav.groupStructure",
-    url: createPageUrl("GroupStructure"),
-    page: 'GroupStructure',
-    icon: Network,
-  },
-  {
-    key: "nav.scenarios",
-    url: createPageUrl("Scenarios"),
-    page: 'Scenarios',
-    icon: GitMerge,
-  },
-  {
-    key: "nav.simulator",
-    url: createPageUrl("MergerSimulator"), // New Merger Simulation module
-    page: 'MergerSimulator',
-    icon: TrendingUp,
-  },
-  {
-    key: "nav.marketAnalysis",
-    url: createPageUrl("MarketAnalysis"),
-    page: 'MarketAnalysis',
-    icon: TrendingUp,
-  },
-  {
-    key: "nav.analytics",
-    url: createPageUrl("Analytics"),
-    page: 'Analytics',
-    icon: TrendingUp,
-  },
-  {
-    key: "nav.recommendations",
-    url: createPageUrl("DealRecommendations"),
-    page: 'DealRecommendations',
-    icon: Target,
-  },
-  {
-    key: "nav.dealPipeline",
-    url: createPageUrl("DealPipeline"),
-    page: 'DealPipeline',
-    icon: TrendingUp,
-  },
   {
     key: "nav.submitOpportunity",
     url: createPageUrl("SubmitOpportunity"),
@@ -118,6 +64,18 @@ const navigationItems = [
     url: createPageUrl("ScreeningBoard"),
     page: 'ScreeningBoard',
     icon: LayoutGrid,
+  },
+  {
+    key: "nav.opportunityRoute",
+    url: createPageUrl("OpportunityRoute"),
+    page: 'OpportunityRoute',
+    icon: Workflow,
+  },
+  {
+    key: "nav.qanda",
+    url: createPageUrl("QandA"),
+    page: 'QandA',
+    icon: MessageSquareQuote,
   },
   {
     key: "nav.pipelineDashboard",
@@ -138,47 +96,16 @@ const navigationItems = [
     icon: FileSpreadsheet,
   },
   {
-    key: "nav.opportunityRoute",
-    url: createPageUrl("OpportunityRoute"),
-    page: 'OpportunityRoute',
-    icon: Workflow,
-  },
-  {
-    key: "nav.qanda",
-    url: createPageUrl("QandA"),
-    page: 'QandA',
-    icon: MessageSquareQuote,
+    key: "nav.groupStructure",
+    url: createPageUrl("GroupStructure"),
+    page: 'GroupStructure',
+    icon: Network,
   },
   {
     key: "nav.investmentThemes",
     url: createPageUrl("ThemeAdmin"),
     page: 'ThemeAdmin',
     icon: Palette,
-    adminOnly: true,
-  },
-  {
-    key: "nav.crm",
-    url: createPageUrl("CRM"),
-    page: 'CRM',
-    icon: Users,
-  },
-  {
-    key: "nav.dueDiligence",
-    url: createPageUrl("DueDiligence"),
-    page: 'DueDiligence',
-    icon: ClipboardCheck,
-  },
-  {
-    key: "nav.portfolios",
-    url: createPageUrl("Portfolios"),
-    page: 'Portfolios',
-    icon: Briefcase,
-  },
-  {
-    key: "nav.userManagement",
-    url: createPageUrl("UserManagement"),
-    page: 'UserManagement',
-    icon: Users,
     adminOnly: true,
   },
   {
@@ -193,6 +120,19 @@ const navigationItems = [
     url: createPageUrl("Settings"),
     page: 'Settings',
     icon: Settings,
+  },
+  // Later phase - off by default (featureFlags.js).
+  {
+    key: "nav.dueDiligence",
+    url: createPageUrl("DueDiligence"),
+    page: 'DueDiligence',
+    icon: ClipboardCheck,
+  },
+  {
+    key: "nav.portfolios",
+    url: createPageUrl("Portfolios"),
+    page: 'Portfolios',
+    icon: Briefcase,
   },
 ];
 

@@ -15,48 +15,41 @@
 // enables (pageKey) or fully disables (-pageKey) a page.
 // ---------------------------------------------------------------------------
 
-// Map of every routable page to its default-enabled state. Keeping defaults on
-// preserves the historical behaviour unless a deployment opts out.
+// Map of every routable page to its default-enabled state (Phase 1 scope,
+// DealForge_Phase1_BRD_v2). Later-phase pages ship switched OFF: their code is
+// kept, but they are hidden from the menu and routes until an administrator
+// enables them (Settings > Features) or FEATURE_FLAGS lists them.
 export const FEATURE_GROUPS = {
-  Dashboard: true,
-  Companies: true,
-  GroupStructure: true,
-  DealPipeline: true,
-  ScreeningBoard: true,
+  // Phase 1
   SubmitOpportunity: true,
+  ScreeningBoard: true,
   OpportunityRoute: true,
-  Scenarios: true,
-  MergerSimulator: true,
-  MarketAnalysis: true,
-  Analytics: true,
-  DealRecommendations: true,
-  ThemeAdmin: true,
-  CRM: true,
-  DueDiligence: true,
-  Portfolios: true,
   QandA: true,
-  UserManagement: true,
-  SuperAdmin: true,
-  Settings: true,
-  Reporting: true,
   PipelineDashboard: true,
   PipelineMetrics: true,
+  Reporting: true,
+  GroupStructure: true,
+  ThemeAdmin: true,
+  SuperAdmin: true,
+  Settings: true,
   MemoPack: true,
   MemoVerification: true,
+  // Not in the menu; routable only as the PLT-06 RTL demonstration screen
+  // (config/i18nData.js RTL_DEMO_SCREEN) until that demo moves to a Phase 1 page.
+  Dashboard: true,
+  // Later phase - off by default
+  DueDiligence: false, // Gate 3 diligence tracking - BRD WF-09, Phase 2
+  Portfolios: false, // post-investment tracking - BRD DSH-05, Phase 4
 };
 
 // Curated groups so administrators can flip whole feature areas at once instead
 // of page by page. Each entry lists the page keys the group toggles.
 export const FEATURE_GROUPS_META = [
-  { key: 'data', label: 'Company & Org Data', pages: ['Companies', 'GroupStructure'] },
-  { key: 'deal_pipeline', label: 'Deal Pipeline', pages: ['DealPipeline', 'ScreeningBoard', 'SubmitOpportunity', 'OpportunityRoute'] },
-  { key: 'analytics', label: 'Analytics & AI', pages: ['Analytics', 'DealRecommendations', 'QandA', 'MarketAnalysis'] },
-  { key: 'themes', label: 'Investment Themes', pages: ['ThemeAdmin'] },
-  { key: 'simulation', label: 'Simulators & Scenarios', pages: ['Scenarios', 'MergerSimulator'] },
-  { key: 'crm_diligence', label: 'CRM & Due Diligence', pages: ['CRM', 'DueDiligence'] },
-  { key: 'portfolios', label: 'Portfolios', pages: ['Portfolios'] },
-  { key: 'reporting', label: 'Reporting', pages: ['Reporting', 'PipelineDashboard', 'PipelineMetrics', 'MemoPack', 'MemoVerification'] },
-  { key: 'admin_tools', label: 'Admin Tools', pages: ['UserManagement', 'SuperAdmin', 'Settings'] },
+  { key: 'deal_pipeline', label: 'Deal Pipeline', pages: ['SubmitOpportunity', 'ScreeningBoard', 'OpportunityRoute', 'QandA'] },
+  { key: 'reporting', label: 'Reporting', pages: ['PipelineDashboard', 'PipelineMetrics', 'Reporting', 'MemoPack', 'MemoVerification'] },
+  { key: 'data', label: 'Organisation & Themes', pages: ['GroupStructure', 'ThemeAdmin'] },
+  { key: 'admin_tools', label: 'Admin Tools', pages: ['SuperAdmin', 'Settings'] },
+  { key: 'later_phase', label: 'Later phase (off in Phase 1)', pages: ['DueDiligence', 'Portfolios'] },
 ];
 
 // Runtime settings entity key where administrator overrides are persisted.

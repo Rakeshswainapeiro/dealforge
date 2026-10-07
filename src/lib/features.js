@@ -5,32 +5,25 @@
 // merged with UI defaults below so the menu and routes keep working even when
 // the backend is offline or the flags are not configured.
 
+// Must mirror FEATURE_GROUPS in server/config/featureFlags.js (Phase 1 scope):
+// later-phase pages stay hidden even when the server is unreachable.
 export const CLIENT_FEATURE_DEFAULTS = {
-  Dashboard: true,
-  Companies: true,
-  GroupStructure: true,
-  DealPipeline: true,
-  ScreeningBoard: true,
   SubmitOpportunity: true,
+  ScreeningBoard: true,
   OpportunityRoute: true,
-  Scenarios: true,
-  MergerSimulator: true,
-  MarketAnalysis: true,
-  Analytics: true,
-  DealRecommendations: true,
-  ThemeAdmin: true,
-  CRM: true,
-  DueDiligence: true,
-  Portfolios: true,
   QandA: true,
-  UserManagement: true,
-  SuperAdmin: true,
-  Settings: true,
-  Reporting: true,
   PipelineDashboard: true,
   PipelineMetrics: true,
+  Reporting: true,
+  GroupStructure: true,
+  ThemeAdmin: true,
+  SuperAdmin: true,
+  Settings: true,
   MemoPack: true,
   MemoVerification: true,
+  Dashboard: true,
+  DueDiligence: false,
+  Portfolios: false,
 };
 
 // Merge a server-provided map over the client defaults. Missing keys inherit

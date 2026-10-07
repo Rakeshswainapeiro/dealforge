@@ -84,11 +84,22 @@ administrator (Settings). Resolution order (later wins):
 
 `FEATURE_FLAGS` is a comma-separated list of page keys: a bare key forces that
 page on, a `-pageKey` forces it off, and listing any bare key makes the list
-authoritative. Example: `FEATURE_FLAGS=Dashboard,DealPipeline,-Analytics,-CRM`.
-Curated groups (Company & Org Data, Deal Pipeline, Analytics & AI, Investment
-Themes, Simulators & Scenarios, CRM & Due Diligence, Portfolios, Admin Tools) let
-an admin flip a whole area at once. The client reads `/api/features` and hides
-disabled routes and menu entries.
+authoritative (only listed pages stay on), so prefer the admin screen for
+switching a single page on. Curated groups (Deal Pipeline, Reporting,
+Organisation & Themes, Admin Tools, Later phase) let an admin flip a whole area
+at once in **Settings > Feature Visibility**. The client reads `/api/features`
+and hides disabled routes and menu entries.
+
+### Phase 1 screen scope
+
+Screens follow DealForge_Phase1_BRD_v2. Later-phase screens are in the code but
+**off by default**: Due Diligence (WF-09, Phase 2) and Portfolios (DSH-05,
+Phase 4). Screens from the generic M&A application with no Phase 1 requirement
+(Companies, Scenarios, Merger Simulator, Market Analysis, Analytics,
+Recommendations, Deal Pipeline, CRM, legacy User Management) were removed. The
+Dashboard is out of the menu and is kept only as the PLT-06 RTL demonstration
+screen. `server/tests/phase1Scope.test.js` guards this scope and keeps the
+server and browser feature defaults identical.
 
 ## Run with Docker (recommended)
 

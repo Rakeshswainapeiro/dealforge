@@ -59,9 +59,9 @@ const PROFILES = [
 // Core journeys every persona depends on. The SPA renders these as client routes;
 // we assert a stable anchor on each rather than brittle text.
 const JOURNEYS = [
-  { id: 'dashboard', path: '/Dashboard', anchor: () => document.body.innerText.length > 50 },
-  { id: 'deal_pipeline', path: '/DealPipeline', anchor: () => !!document.querySelector('[data-testid], main, .card, h1') },
+  { id: 'submit_opportunity', path: '/SubmitOpportunity', anchor: () => !!document.querySelector('[data-testid], main, h1') },
   { id: 'screening_board', path: '/ScreeningBoard', anchor: () => !!document.querySelector('[data-testid], main, h1') },
+  { id: 'opportunity_route', path: '/OpportunityRoute', anchor: () => !!document.querySelector('#opportunity-select, main, h1') },
   { id: 'settings', path: '/Settings', anchor: () => !location.pathname.startsWith('/login') && !!document.querySelector('[role=tab], h1') },
 ];
 
