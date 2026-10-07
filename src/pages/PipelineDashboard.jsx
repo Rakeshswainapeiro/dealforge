@@ -188,12 +188,14 @@ export default function PipelineDashboard() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4" data-testid="pd-summary">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4" data-testid="pd-summary">
           {[
             { label: "Matching opportunities", value: summary.total },
             { label: "Board total", value: data?.board_total ?? "—" },
             { label: "SLA breaches", value: summary.breaches, warn: summary.breaches > 0 },
-            { label: "Stages in cut", value: Object.keys(summary.by_state || {}).length },
+            { label: "Open questions", value: summary.open_questions ?? 0 },
+            { label: "Overdue questions", value: summary.overdue_questions ?? 0, warn: (summary.overdue_questions || 0) > 0 },
+            { label: "Unassigned", value: summary.unassigned ?? 0, warn: (summary.unassigned || 0) > 0 },
           ].map((m) => (
             <Card key={m.label}>
               <CardContent className="pt-6">

@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import SiriusMemoDialog from "@/components/pipeline/SiriusMemoDialog";
 import OwnerPanel from "@/components/pipeline/OwnerPanel";
+import QuestionsPanel from "@/components/pipeline/QuestionsPanel";
 
 // ---------------------------------------------------------------------------
 // E6 — Sirius screening board.
@@ -223,6 +224,11 @@ function opportunityCard(card, { onSelect, active, t }) {
           <Badge variant="outline" className="gap-1 font-medium bg-amber-100 text-amber-800 border-amber-200">
             <ShieldAlert className="h-3 w-3" />
             {t("board.themeException")}
+          </Badge>
+        )}
+        {card.open_questions > 0 && (
+          <Badge variant="outline" className={cn("gap-1 font-medium", card.overdue_questions > 0 ? "bg-red-100 text-red-800 border-red-200" : "bg-slate-100 text-slate-700 border-slate-200")}>
+            {card.open_questions} Q{card.overdue_questions > 0 ? ` · ${card.overdue_questions} overdue` : ""}
           </Badge>
         )}
       </div>
@@ -750,6 +756,7 @@ export default function ScreeningBoard() {
         </SheetHeader>
 
         <OwnerPanel card={selectedCard} />
+        <QuestionsPanel card={selectedCard} />
 
         {/* Data-room folder link (W8-04 / BRD INTG-01). */}
         <div className="mt-6 rounded-lg border border-slate-200 p-3" data-testid="dataroom-link-panel">

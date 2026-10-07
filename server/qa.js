@@ -1,10 +1,13 @@
 import crypto from 'node:crypto';
 import express from 'express';
+import multer from 'multer';
 import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
 import { canViewOrg } from './rbac.js';
-import { isProducerFor } from './config/workflowStates.js';
+import { isProducerFor, isReviewer } from './config/workflowStates.js';
+import { addDocumentVersion } from './gate.js';
+import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
 import { notify } from './notify.js';
 import { loadCommentVisibilityConfig } from './commentVisibility.js';
 import {
@@ -215,9 +218,16 @@ export async function openThread(opportunityId, payload = {}, { actor } = {}) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
   const dueAt = parseDueDate(payload.due_at ?? payload.due_date);
+  // WF-04: every question has an owner who must answer it. A Sirius question
+  // defaults to the subsidiary preparer, who is also added as a participant.
+  const preparer = String(opp.data?.owner_email || opp.data?.submitted_by || '').trim().toLowerCase() || null;
+  const ownerEmail = payload.owner_email ? String(payload.owner_email).trim().toLowerCase()
+    : (requiresResponse && visibility !== 'internal' && !isProducerFor(actor, opp.owner_org_id) ? preparer : null);
+  const participants = [...(payload.participants || []), ...(ownerEmail ? [ownerEmail] : [])];
+  if (!participants.length && preparer && visibility !== 'internal' && !isProducerFor(actor, opp.owner_org_id)) participants.push(preparer);
   const { thread, people } = await insertThread(pool, opp, {
-    subject, body, requiresResponse, visibility, participants: payload.participants || [],
-    kind: 'question', dueAt, ownerEmail: payload.owner_email ? String(payload.owner_email).trim().toLowerCase() : null,
+    subject, body, requiresResponse, visibility, participants,
+    kind: 'question', dueAt, ownerEmail,
   }, actor);
   await writeAudit({ entity: 'qa_thread', entityId: thread.id, action: 'thread_open', actor, orgId: opp.owner_org_id, after: { subject, requires_response: requiresResponse, visibility, due_at: dueAt } });
   await writeAudit({ entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'qa_thread_open', actor, orgId: opp.owner_org_id, after: { thread_id: thread.id, subject, visibility } });
@@ -233,7 +243,7 @@ export function parseDueDate(value) {
   return d.toISOString();
 }
 
-export async function addMessage(threadId, payload = {}, { actor } = {}) {
+export async function addMessage(threadId, payload = {}, { actor, documentId = null } = {}) {
   const { rows } = await pool.query('SELECT * FROM qa_thread WHERE id = $1', [threadId]);
   const thread = rows[0];
   if (!thread) { const e = new Error('Thread not found'); e.status = 404; throw e; }
@@ -256,14 +266,16 @@ export async function addMessage(threadId, payload = {}, { actor } = {}) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
   const { rows: messageRows } = await pool.query(
-    "INSERT INTO qa_message (id, thread_id, author_email, author_name, author_id, body, is_response, visibility) " +
-      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
-    [uuid(), threadId, actor.email, actor.full_name || null, actor.id, body, isResponse, visibility]
+    "INSERT INTO qa_message (id, thread_id, author_email, author_name, author_id, body, is_response, visibility, document_id) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+    [uuid(), threadId, actor.email, actor.full_name || null, actor.id, body, isResponse, visibility, documentId]
   );
   await pool.query('UPDATE qa_thread SET updated_at = now() WHERE id = $1', [threadId]);
   // A formal information request is answered only by the owning subsidiary;
   // anyone else's "response" is an ordinary message on it.
+  // The person who asked cannot answer their own question.
   const countsAsAnswer = isResponse && thread.requires_response && !thread.response_received
+    && String(actor.email || '').toLowerCase() !== String(thread.raised_by || '').toLowerCase()
     && (thread.kind !== 'information_request' || isProducerFor(actor, thread.owner_org_id));
   if (countsAsAnswer) {
     await pool.query(
@@ -355,10 +367,18 @@ export async function getThread(threadId, { actor } = {}) {
   if (actor && !maySeeThread(config, actor, thread)) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
-  const { rows: messages } = await pool.query('SELECT * FROM qa_message WHERE thread_id = $1 ORDER BY created_at', [threadId]);
+  const { rows: messages } = await pool.query(
+    "SELECT m.*, CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object('id', d.id, 'original_name', d.original_name, 'size', d.size, " +
+      "'mimetype', d.mimetype, 'scan_verdict', d.scan_verdict, 'download_url', '/api/gate/documents/' || d.id || '/download') END AS attachment " +
+      'FROM qa_message m LEFT JOIN submission_document d ON d.id = m.document_id AND d.deleted = false ' +
+      'WHERE m.thread_id = $1 ORDER BY m.created_at',
+    [threadId]
+  );
   const { rows: participants } = await pool.query('SELECT * FROM qa_participant WHERE thread_id = $1 ORDER BY role, user_email', [threadId]);
+  const { rows: opp } = await pool.query("SELECT data->>'opportunity_name' AS name FROM entity_record WHERE id = $1", [thread.opportunity_id]);
   return {
     ...toThread(thread),
+    opportunity_name: opp[0]?.name || null,
     messages: actor ? filterMessages(config, actor, thread, messages) : messages,
     participants,
   };
@@ -367,16 +387,47 @@ export async function getThread(threadId, { actor } = {}) {
 /** Threads the actor is a participant in, open ones first. Internal threads are
  *  withheld entirely from a subsidiary-only participant (W6-04 / AUD-03). */
 export async function myThreads(actor) {
+  // WF-04 / EXP-04: the inbox holds every thread the user takes part in, every
+  // thread they own or raised, and - for a subsidiary - every thread on its own
+  // organisation's opportunities, so a colleague can answer while the preparer
+  // is away. Visibility rules still withhold internal threads.
+  const producerOrgs = [actor.org_id, ...(actor.granted_org_ids || [])].filter(Boolean);
   const { rows } = await pool.query(
-    "SELECT t.*, p.role AS my_role, er.data->>'opportunity_name' AS opportunity_name " +
-      "FROM qa_thread t " +
-      "JOIN qa_participant p ON p.thread_id = t.id AND p.user_email = $1 " +
-      "LEFT JOIN entity_record er ON er.id = t.opportunity_id " +
-      "ORDER BY (t.status = 'open') DESC, t.updated_at DESC LIMIT 100",
-    [actor.email]
+    "SELECT t.*, p.role AS my_role, er.data->>'opportunity_name' AS opportunity_name, er.data->>'status' AS opportunity_status " +
+      'FROM qa_thread t ' +
+      'LEFT JOIN qa_participant p ON p.thread_id = t.id AND lower(p.user_email) = lower($1) ' +
+      'LEFT JOIN entity_record er ON er.id = t.opportunity_id ' +
+      'WHERE p.id IS NOT NULL OR lower(t.owner_email) = lower($1) OR lower(t.raised_by) = lower($1) ' +
+      '   OR ($3 AND t.owner_org_id = ANY($2)) ' +
+      "ORDER BY (t.status = 'open') DESC, t.due_at ASC NULLS LAST, t.updated_at DESC LIMIT 300",
+    [actor.email, producerOrgs, producerOrgs.some((org) => isProducerFor(actor, org))]
   );
   const config = await loadCommentVisibilityConfig();
-  return rows.filter((t) => maySeeThread(config, actor, t)).map(toThread);
+  const visible = rows
+    .filter((t) => canViewOrg(actor.membership, t.owner_org_id, { descendantIds: actor.descendant_ids, grantedOrgIds: actor.granted_org_ids }))
+    .filter((t) => maySeeThread(config, actor, t))
+    .map(toThread)
+    .map((t) => ({
+      ...t,
+      // Is the next move mine? The owner (or, unowned, the owning subsidiary)
+      // answers; the raiser closes an answered thread.
+      awaiting_me: t.status === 'open' && (
+        (t.display_status === 'open' && (String(t.owner_email || '').toLowerCase() === String(actor.email).toLowerCase()
+          || (!t.owner_email && t.requires_response && isProducerFor(actor, t.owner_org_id))))
+        || (t.display_status === 'answered' && String(t.raised_by || '').toLowerCase() === String(actor.email).toLowerCase())),
+    }));
+  return visible;
+}
+
+export function summarizeThreads(threads) {
+  return {
+    total: threads.length,
+    open: threads.filter((t) => t.display_status === 'open').length,
+    answered: threads.filter((t) => t.display_status === 'answered').length,
+    closed: threads.filter((t) => t.display_status === 'closed').length,
+    overdue: threads.filter((t) => t.overdue).length,
+    awaiting_me: threads.filter((t) => t.awaiting_me).length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +446,10 @@ qaRouter.use(async (req, res, next) => {
 function sendErr(res, err) { res.status(err.status || 500).json({ error: err.message, ...(err.data || {}) }); }
 
 qaRouter.get('/my-threads', async (req, res) => {
-  try { res.json({ items: await myThreads(req.actor) }); } catch (err) { sendErr(res, err); }
+  try {
+    const items = await myThreads(req.actor);
+    res.json({ items, summary: summarizeThreads(items) });
+  } catch (err) { sendErr(res, err); }
 });
 
 qaRouter.get('/opportunities/:id/threads', async (req, res) => {
@@ -425,7 +479,43 @@ qaRouter.get('/threads/:id', async (req, res) => {
 });
 
 qaRouter.post('/threads/:id/messages', async (req, res) => {
-  try { res.json(await addMessage(req.params.id, req.body || {}, { actor: req.actor })); } catch (err) { sendErr(res, err); }
+  try {
+    const { body, is_response: isResponse, visibility } = req.body || {};
+    res.json(await addMessage(req.params.id, { body, is_response: isResponse, visibility }, { actor: req.actor }));
+  } catch (err) { sendErr(res, err); }
+});
+
+// A document sent in the thread (WF-04: "the subsidiary responds and uploads
+// documents in the thread"). It goes through the same upload policy and virus
+// scan as any submission document, is stored against the opportunity (so it
+// stays with the record and its audit trail), and the message links to it.
+const attachmentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 }, fileFilter: uploadFilter });
+
+qaRouter.post('/threads/:id/attachments', attachmentUpload.single('file'), async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM qa_thread WHERE id = $1', [req.params.id]);
+    const thread = rows[0];
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+    if (!canViewOrg(req.actor.membership, thread.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
+      return res.status(403).json({ error: 'Not permitted to view this thread' });
+    }
+    const config = await loadCommentVisibilityConfig();
+    if (!maySeeThread(config, req.actor, thread)) return res.status(403).json({ error: COMMENT_VISIBILITY_MESSAGES.internal_hidden });
+    if (thread.status !== 'open') return res.status(409).json({ error: 'This thread is closed' });
+    if (!isProducerFor(req.actor, thread.owner_org_id) && !isReviewer(req.actor)) {
+      return res.status(403).json({ error: 'Only the owning subsidiary or the Sirius team can attach documents' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'A file is required' });
+    const doc = await addDocumentVersion({
+      opportunityId: thread.opportunity_id, ownerOrgId: thread.owner_org_id,
+      requirementKey: 'qa_attachment:' + thread.id + ':' + uuid().slice(0, 8), file: req.file, actor: req.actor,
+    });
+    const body = String(req.body?.body || '').trim() || 'Attached ' + (doc.original_name || 'a document');
+    const message = await addMessage(thread.id, {
+      body, is_response: req.body?.is_response === 'true' || req.body?.is_response === true, visibility: req.body?.visibility,
+    }, { actor: req.actor, documentId: doc.id });
+    res.status(201).json({ message, document: doc });
+  } catch (err) { sendErr(res, err); }
 });
 
 qaRouter.post('/threads/:id/close', async (req, res) => {

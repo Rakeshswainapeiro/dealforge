@@ -45,11 +45,25 @@ import {
 // ---------------------------------------------------------------------------
 
 const FILTERS = [
+  { key: "mine", label: "Awaiting me" },
   { key: "all", labelKey: "qa.all" },
   { key: "open", labelKey: "common.open" },
   { key: "awaiting", labelKey: "qa.awaitingResponse" },
   { key: "closed", labelKey: "common.closed" },
 ];
+
+// WF-04: open / answered / closed, and the kind of thread.
+const DISPLAY_STATUS_META = {
+  open: { label: "Open", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  answered: { label: "Answered", className: "bg-indigo-100 text-indigo-800 border-indigo-200" },
+  closed: { label: "Closed", className: "bg-slate-100 text-slate-600 border-slate-200" },
+};
+
+function formatDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
 
 const AUDIT_ACTION_META = {
   open: { label: "Opened", className: "bg-teal-100 text-teal-800 border-teal-200" },
@@ -128,7 +142,10 @@ export default function QandA() {
   const { toast } = useToast();
 
   const [filter, setFilter] = useState("all");
-  const [selectedId, setSelectedId] = useState(null);
+  // A thread can be deep-linked: /qanda?thread=<id> (from the board or a notification).
+  const [selectedId, setSelectedId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("thread"); } catch { return null; }
+  });
   const [body, setBody] = useState("");
   const [isResponse, setIsResponse] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
@@ -175,6 +192,20 @@ export default function QandA() {
       queryClient.invalidateQueries({ queryKey: ["qa", "audit", threadId] });
     }
   };
+
+  // A document sent in the thread (WF-04). It is scanned and stored with the
+  // opportunity; the message links to it.
+  const attachMutation = useMutation({
+    mutationFn: ({ threadId, file, messageBody, asResponse }) =>
+      api.qa.attach(threadId, file, { body: messageBody, isResponse: asResponse }),
+    onSuccess: (_result, variables) => {
+      invalidateThread(variables.threadId);
+      setBody("");
+      setIsResponse(false);
+      toast({ title: "Document attached", description: "It is stored with the opportunity and linked in the thread." });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Could not attach the document", description: errorMessage(error, "Upload failed.") }),
+  });
 
   const replyMutation = useMutation({
     mutationFn: ({ threadId, messageBody, asResponse, visibility }) =>
@@ -266,6 +297,7 @@ export default function QandA() {
 
   const counts = useMemo(
     () => ({
+      mine: threads.filter((thread) => thread.awaiting_me).length,
       all: threads.length,
       open: threads.filter((thread) => thread.is_open).length,
       awaiting: threads.filter((thread) => thread.awaiting_response).length,
@@ -275,6 +307,7 @@ export default function QandA() {
   );
 
   const visibleThreads = useMemo(() => {
+    if (filter === "mine") return threads.filter((thread) => thread.awaiting_me);
     if (filter === "open") return threads.filter((thread) => thread.is_open);
     if (filter === "awaiting") return threads.filter((thread) => thread.awaiting_response);
     if (filter === "closed") return threads.filter((thread) => !thread.is_open);
@@ -342,15 +375,9 @@ export default function QandA() {
           <p className="font-medium leading-snug text-slate-900 line-clamp-2">
             {item.subject || "(no subject)"}
           </p>
-          {item.is_open ? (
-            <Badge variant="outline" className="shrink-0 gap-1 bg-emerald-100 text-emerald-800 border-emerald-200">
-              {t("common.open")}
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="shrink-0 gap-1 bg-slate-100 text-slate-600 border-slate-200">
-              {t("common.closed")}
-            </Badge>
-          )}
+          <Badge variant="outline" className={cn("shrink-0 gap-1", (DISPLAY_STATUS_META[item.display_status] || DISPLAY_STATUS_META.open).className)}>
+            {(DISPLAY_STATUS_META[item.display_status] || DISPLAY_STATUS_META.open).label}
+          </Badge>
         </div>
 
         <p className="mt-1 truncate text-xs text-slate-500">
@@ -361,6 +388,17 @@ export default function QandA() {
         </p>
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {item.kind === "information_request" && (
+            <Badge variant="outline" className="gap-1 bg-amber-50 text-amber-800 border-amber-200">Information request</Badge>
+          )}
+          {item.awaiting_me && (
+            <Badge variant="outline" className="gap-1 bg-teal-100 text-teal-800 border-teal-200">Your move</Badge>
+          )}
+          {item.due_at && item.is_open && (
+            <Badge variant="outline" className={cn("gap-1", item.overdue ? "bg-red-100 text-red-800 border-red-200" : "bg-white text-slate-600 border-slate-200")}>
+              {item.overdue ? "Overdue · " : "Due "}{formatDate(item.due_at)}
+            </Badge>
+          )}
           {item.awaiting_response && (
             <Badge variant="outline" className="gap-1 bg-amber-100 text-amber-800 border-amber-200">
               <ArrowDown className="h-3 w-3" />
@@ -467,6 +505,18 @@ export default function QandA() {
         </div>
 
         {/* Metadata ------------------------------------------------------- */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-3" data-testid="qa-owner">
+            <p className="text-xs text-slate-500">Owner (answers it)</p>
+            <p className="truncate text-sm font-medium text-slate-900">{thread.owner_email || "The owning subsidiary"}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 p-3" data-testid="qa-due">
+            <p className="text-xs text-slate-500">Due</p>
+            <p className={cn("text-sm font-medium", thread.overdue ? "text-red-700" : "text-slate-900")}>
+              {thread.due_at ? formatDateTime(thread.due_at) + (thread.overdue ? " (overdue)" : "") : "No due date"}
+            </p>
+          </div>
+        </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-slate-200 p-3">
             <p className="text-xs text-slate-500">Raised by</p>
@@ -481,7 +531,7 @@ export default function QandA() {
           <div className="rounded-lg border border-slate-200 p-3">
             <p className="text-xs text-slate-500">{isOpen ? "Status" : "Closed"}</p>
             <p className="truncate text-sm font-medium text-slate-900">
-              {isOpen ? "Open for clarification" : formatDateTime(thread.closed_at)}
+              {isOpen ? (thread.display_status === "answered" ? "Answered - the asker can close it" : "Waiting for an answer") : formatDateTime(thread.closed_at)}
             </p>
             {!isOpen && (
               <p className="mt-0.5 truncate text-xs text-slate-500">
@@ -560,6 +610,16 @@ export default function QandA() {
                       <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-700">
                         {message.body}
                       </p>
+                      {message.attachment && (
+                        <a
+                          href={message.attachment.download_url}
+                          className="mt-1.5 inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-teal-700 hover:bg-slate-50"
+                          data-testid="qa-attachment-link"
+                        >
+                          📎 {message.attachment.original_name}
+                          {message.attachment.size ? ` (${Math.max(1, Math.round(message.attachment.size / 1024))} KB)` : ""}
+                        </a>
+                      )}
                       <p className="mt-1.5 text-xs text-slate-400">
                         {formatDateTime(message.created_at)}
                       </p>
@@ -608,6 +668,19 @@ export default function QandA() {
                   Internal (group only)
                 </label>
               )}
+              <label className={cn("inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50", attachMutation.isPending && "pointer-events-none opacity-50")}>
+                <input
+                  type="file"
+                  className="hidden"
+                  data-testid="qa-attach-input"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) attachMutation.mutate({ threadId: selectedId, file, messageBody: body.trim(), asResponse: isResponse });
+                  }}
+                />
+                {attachMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "📎"} Attach document
+              </label>
               <Button
                 className="gap-2 bg-teal-600 hover:bg-teal-700"
                 onClick={sendReply}
@@ -746,7 +819,7 @@ export default function QandA() {
                     aria-pressed={active}
                     onClick={() => setFilter(option.key)}
                   >
-                    {t(option.labelKey)}
+                    {option.label || t(option.labelKey)}
                     <span
                       className={cn(
                         "rounded-full px-1.5 text-xs",

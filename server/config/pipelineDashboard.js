@@ -195,11 +195,18 @@ export function drillDown(cards, dimension = 'state', { subsidiaryNames = {} } =
 export function summarizePipeline(cards) {
   const by_state = {};
   let breaches = 0;
+  let openQuestions = 0;
+  let overdueQuestions = 0;
+  let unassigned = 0;
   for (const c of cards || []) {
     by_state[c.state] = (by_state[c.state] || 0) + 1;
-    if (c.sla_breached) breaches += 1;
+    if (c.sla_breached && c.is_open !== false) breaches += 1;
+    openQuestions += c.open_questions || 0;
+    overdueQuestions += c.overdue_questions || 0;
+    if (c.is_open && !c.sirius_owner_email) unassigned += 1;
   }
-  return { total: (cards || []).length, breaches, by_state };
+  // WF-04: open questions are shown on the dashboard; WF-02: unowned items.
+  return { total: (cards || []).length, breaches, by_state, open_questions: openQuestions, overdue_questions: overdueQuestions, unassigned };
 }
 
 export function activeFilterCount(filters = {}) {

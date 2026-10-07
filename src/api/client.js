@@ -1115,6 +1115,24 @@ const qa = {
     return serverFetch(`/api/qa/threads/${encodeURIComponent(threadId)}`);
   },
 
+  async attach(threadId, file, { body, isResponse = false } = {}) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (body) formData.append('body', body);
+    formData.append('is_response', isResponse ? 'true' : 'false');
+    const response = await fetch(`${API_BASE}/api/qa/threads/${encodeURIComponent(threadId)}/attachments`, {
+      method: 'POST', headers: actorHeaders(), body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error || `Upload failed with status ${response.status}`);
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
+    return data;
+  },
+
   reply(threadId, body, isResponse = false, visibility) {
     return serverFetch(`/api/qa/threads/${encodeURIComponent(threadId)}/messages`, {
       method: 'POST',

@@ -1648,3 +1648,100 @@ describe('named owner and reviewer routing (WF-02 / WF-03)', () => {
     assert.ok(!owners.data.owners.some((o) => o.email.endsWith('@infinia.local')));
   });
 });
+
+describe('Q&A threads: owner, due date, inbox and documents (WF-04 / EXP-04)', () => {
+  async function ask(id, extra = {}) {
+    return api('/api/qa/opportunities/' + id + '/threads', {
+      method: 'POST', user: 'user-sirius-deal-lead',
+      body: { subject: 'Customer concentration', body: 'Share the top-10 customer list.', requires_response: true, due_at: '2030-01-31', ...extra },
+    });
+  }
+
+  test('a Sirius question is owned by the preparer and lands in the subsidiary inbox', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const opened = await ask(draft.id);
+    assert.equal(opened.status, 200, JSON.stringify(opened.data));
+    assert.equal(opened.data.owner_email, 'deal.lead@infinia.local');
+    assert.ok(opened.data.due_at.startsWith('2030-01-31'));
+    assert.equal(opened.data.display_status, 'open');
+
+    const inbox = await api('/api/qa/my-threads', { user: 'user-deal-lead' });
+    const item = inbox.data.items.find((x) => x.id === opened.data.id);
+    assert.ok(item, 'the preparer sees it');
+    assert.equal(item.awaiting_me, true);
+    assert.ok(inbox.data.summary.awaiting_me >= 1);
+
+    // A colleague in the same subsidiary sees it too, so someone can answer.
+    const cfo = await api('/api/qa/my-threads', { user: 'user-cfo' });
+    assert.ok(cfo.data.items.some((x) => x.id === opened.data.id));
+    // Another subsidiary never does.
+    const sibling = await api('/api/qa/my-threads', { user: 'user-finstreet-lead' });
+    assert.ok(!sibling.data.items.some((x) => x.id === opened.data.id));
+
+    const card = (await api('/api/pipeline/board', { user: 'user-sirius-deal-lead' })).data.columns.flatMap((c) => c.items).find((i) => i.id === draft.id);
+    assert.ok(card.open_questions >= 1, 'the board shows the open question');
+  });
+
+  test('the asker cannot answer their own question; the subsidiary answers and the asker closes', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const { data: thread } = await ask(draft.id);
+    await api('/api/qa/threads/' + thread.id + '/messages', { method: 'POST', user: 'user-sirius-deal-lead', body: { body: 'Answering myself', is_response: true } });
+    let read = await api('/api/qa/threads/' + thread.id, { user: 'user-sirius-deal-lead' });
+    assert.equal(read.data.display_status, 'open');
+    await api('/api/qa/threads/' + thread.id + '/messages', { method: 'POST', user: 'user-deal-lead', body: { body: 'Top 10 = 42% of revenue.', is_response: true } });
+    read = await api('/api/qa/threads/' + thread.id, { user: 'user-sirius-deal-lead' });
+    assert.equal(read.data.display_status, 'answered');
+    assert.equal(read.data.answered_by, 'deal.lead@infinia.local');
+    const inbox = await api('/api/qa/my-threads', { user: 'user-sirius-deal-lead' });
+    assert.equal(inbox.data.items.find((x) => x.id === thread.id).awaiting_me, true, 'the asker now closes it');
+    const closed = await api('/api/qa/threads/' + thread.id + '/close', { method: 'POST', user: 'user-sirius-deal-lead', body: { comment: 'Thanks' } });
+    assert.equal(closed.data.display_status, 'closed');
+  });
+
+  test('a document sent in the thread is scanned, stored with the record and downloadable only in scope', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const { data: thread } = await ask(draft.id);
+    const form = new FormData();
+    form.append('file', new Blob(['customer,share\nA,12\n'], { type: 'text/csv' }), 'top10.csv');
+    form.append('body', 'List attached.');
+    form.append('is_response', 'true');
+    const sent = await api('/api/qa/threads/' + thread.id + '/attachments', { method: 'POST', user: 'user-deal-lead', form });
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+    const read = await api('/api/qa/threads/' + thread.id, { user: 'user-sirius-deal-lead' });
+    const msg = read.data.messages.find((m) => m.attachment);
+    assert.ok(msg, 'the message links the document');
+    assert.equal(msg.attachment.original_name, 'top10.csv');
+    assert.equal(read.data.display_status, 'answered');
+
+    const ok = await fetch(BASE + msg.attachment.download_url, { headers: { 'x-user-id': 'user-sirius-deal-lead' } });
+    assert.equal(ok.status, 200);
+    assert.match(await ok.text(), /customer,share/);
+    assert.match(ok.headers.get('content-disposition') || '', /attachment/);
+    const sibling = await fetch(BASE + msg.attachment.download_url, { headers: { 'x-user-id': 'user-finstreet-lead' } });
+    assert.equal(sibling.status, 403);
+    const docs = await api('/api/gate/opportunities/' + draft.id + '/documents', { user: 'user-deal-lead' });
+    assert.ok(docs.data.some((d) => d.id === sent.data.document.id), 'the document is part of the record');
+
+    const exe = new FormData();
+    exe.append('file', new Blob(['MZ'], { type: 'application/octet-stream' }), 'tool.exe');
+    const refused = await api('/api/qa/threads/' + thread.id + '/attachments', { method: 'POST', user: 'user-deal-lead', form: exe });
+    assert.ok([400, 415].includes(refused.status), 'the upload policy applies: ' + refused.status);
+  });
+
+  test('an internal thread and its attachment stay with the Sirius team', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const { data: thread } = await ask(draft.id, { visibility: 'internal', requires_response: false, subject: 'Internal view' });
+    const form = new FormData();
+    form.append('file', new Blob(['internal note'], { type: 'text/plain' }), 'note.txt');
+    const sent = await api('/api/qa/threads/' + thread.id + '/attachments', { method: 'POST', user: 'user-sirius-deal-lead', form });
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+    const inbox = await api('/api/qa/my-threads', { user: 'user-deal-lead' });
+    assert.ok(!inbox.data.items.some((x) => x.id === thread.id));
+    const dl = await fetch(BASE + '/api/gate/documents/' + sent.data.document.id + '/download', { headers: { 'x-user-id': 'user-deal-lead' } });
+    assert.equal(dl.status, 403);
+  });
+});

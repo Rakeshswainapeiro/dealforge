@@ -22,7 +22,7 @@ import { loadReviewsFor, loadRelatedPartyConfig as loadRelatedPartyConfigForCard
 import { resolveOverlayStatus as resolveRpOverlay } from './config/relatedParty.js';
 import {
   STATES, TRANSITIONS as TRANSITION_RULES, STATE_KEYS, STATE_LABELS, DEFAULT_SLA, BOARD_STATES, OPEN_STATES, FINAL_STATES, transitionMap, normalizeState,
-  availableActions, nextActorFor, EDITABLE_STATES, mayReview,
+  availableActions, nextActorFor, EDITABLE_STATES, mayReview, isReviewer,
 } from './config/workflowStates.js';
 import { transitionOpportunity } from './lifecycle.js';
 import { buildDataroomLinkRecord, describeDataroomLink, DATAROOM_LINK_VERSION, DATAROOM_PROVIDERS } from './config/dataroomLink.js';
@@ -194,7 +194,25 @@ async function cardsFor(actor, rows) {
   const doaConfig = await loadDoaConfig();
   const rpConfig = await loadRelatedPartyConfigForCards();
   const rpReviews = await loadReviewsFor(rows.map((r) => r.id)).catch(() => new Map());
-  return rows.map((r) => opportunityToCard(r, slaByState, actor, doaConfig, rpConfig, rpReviews.get(r.id)));
+  const questions = await questionCounts(rows.map((r) => r.id), actor).catch(() => new Map());
+  return rows.map((r) => ({
+    ...opportunityToCard(r, slaByState, actor, doaConfig, rpConfig, rpReviews.get(r.id)),
+    ...(questions.get(r.id) || { open_questions: 0, overdue_questions: 0 }),
+  }));
+}
+
+// Open and overdue Q&A threads per opportunity (WF-04: "open questions shown on
+// the dashboard"). Internal threads are only counted for the Sirius team.
+async function questionCounts(ids, actor) {
+  if (!ids.length) return new Map();
+  const { rows } = await pool.query(
+    "SELECT opportunity_id, count(*) FILTER (WHERE response_received = false OR requires_response = false)::int AS open_questions, " +
+      "count(*) FILTER (WHERE response_received = false AND due_at IS NOT NULL AND due_at < now())::int AS overdue_questions " +
+      "FROM qa_thread WHERE opportunity_id = ANY($1) AND status = 'open' AND ($2 OR COALESCE(visibility, 'shared') <> 'internal') " +
+      'GROUP BY opportunity_id',
+    [ids, isReviewer(actor)]
+  );
+  return new Map(rows.map((r) => [r.opportunity_id, { open_questions: r.open_questions, overdue_questions: r.overdue_questions }]));
 }
 
 // Screening board: items by state with owner, age and SLA breach (WF-01/02).

@@ -464,6 +464,7 @@ CREATE INDEX IF NOT EXISTS qa_participant_thread_idx ON qa_participant(thread_id
 -- comment is deliberately marked internal.
 ALTER TABLE qa_thread ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared';
 ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared';
+ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS document_id TEXT;
 
 -- BRD v2 WF-04 / WF-01: every question has a status (open / answered /
 -- closed), a due date and an owner. 'kind' separates a plain clarification

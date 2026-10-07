@@ -5,7 +5,9 @@ import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
 import { canViewOrg, isCrossOrgReader, canConfigure } from './rbac.js';
-import { saveFile, storageInfo, scopedObjectKey } from './storage.js';
+import { saveFile, storageInfo, scopedObjectKey, getObjectStream, UPLOAD_DIR } from './storage.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
 import { loadDocumentPolicyConfig } from './documentPolicy.js';
 import { checkUpload, scanUpload, scanBlocksUpload } from './config/documentPolicy.js';
@@ -258,9 +260,8 @@ function docToRecord(row) {
     // The openable source URL: object-store keys stream through /api/files, the
     // local-disk fallback serves the stored filename from /uploads (W5-04 /
     // DOC-05 relies on this to let a reviewer open the linked source).
-    file_url: row.object_key
-      ? '/api/files/' + String(row.object_key).split('/').map(encodeURIComponent).join('/')
-      : (row.filename ? '/uploads/' + encodeURIComponent(row.filename) : null),
+    // Every stored file is opened through the permission-checked download route.
+    file_url: row.id ? '/api/gate/documents/' + row.id + '/download' : null,
   };
 }
 
@@ -1186,6 +1187,43 @@ gateRouter.post('/opportunities/:id/documents', upload.single('file'), async (re
       }
     }
     res.status(201).json(doc);
+  } catch (err) { sendErr(res, err); }
+});
+
+// Download one stored document (DOC-02). The reader must be able to see the
+// owning organisation, and an internal Q&A attachment follows the thread's
+// visibility, so a file is never reachable just by knowing its name.
+gateRouter.get('/documents/:id/download', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM submission_document WHERE id = $1 AND deleted = false', [req.params.id]);
+    const doc = rows[0];
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (!canViewOrg(req.actor.membership, doc.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
+      return res.status(403).json({ error: 'Not permitted to view this document' });
+    }
+    const threadId = String(doc.requirement_key || '').startsWith('qa_attachment:') ? doc.requirement_key.split(':')[1] : null;
+    if (threadId) {
+      const { rows: t } = await pool.query('SELECT visibility FROM qa_thread WHERE id = $1', [threadId]);
+      const { rows: m } = await pool.query('SELECT visibility FROM qa_message WHERE document_id = $1 LIMIT 1', [doc.id]);
+      const hidden = [t[0]?.visibility, m[0]?.visibility].includes('internal');
+      if (hidden && !isReviewer(req.actor)) return res.status(403).json({ error: 'Not permitted to view this document' });
+    }
+    if (doc.scan_verdict === 'infected') {
+      return res.status(409).json({ error: 'The file did not pass the virus scan and cannot be downloaded', scan_verdict: doc.scan_verdict });
+    }
+    const name = String(doc.original_name || doc.filename || 'document').replace(/[^\w.\- ()]/g, '_');
+    res.setHeader('Content-Type', doc.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + name + '"');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    await writeAudit({ entity: 'submission_document', entityId: doc.id, action: 'download', actor: req.actor, orgId: doc.owner_org_id });
+    if (doc.object_key) {
+      const stream = await getObjectStream(doc.object_key);
+      return stream.pipe(res);
+    }
+    const file = path.join(UPLOAD_DIR, path.basename(doc.filename || ''));
+    if (!doc.filename || !fs.existsSync(file)) return res.status(404).json({ error: 'The stored file is missing' });
+    return fs.createReadStream(file).pipe(res);
   } catch (err) { sendErr(res, err); }
 });
 
