@@ -123,6 +123,9 @@ export function evaluateQualifyingGates(data = {}) {
     return {
       number: gate.number,
       key: gate.key,
+      // The opportunity field the answer is saved under. The Submit page renders
+      // the gate cards from this payload and writes the answer to this key.
+      answer_key: gateAnswerKey(gate.key),
       label: gate.label,
       question: gate.question,
       answer,

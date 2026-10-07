@@ -36,6 +36,25 @@ describe('qualifying gates model (INT-08)', () => {
   });
 });
 
+describe('qualifying gate status payload (UI contract)', () => {
+  // Regression: the Submit page renders the gate cards from this payload and
+  // saves each answer under g.answer_key. Without it the UI called
+  // handleChange(undefined, 'yes'), the answer was dropped, and no opportunity
+  // could be submitted through the UI.
+  test('every evaluated gate carries the field its answer is saved under', () => {
+    const { gates } = evaluateQualifyingGates({});
+    assert.equal(gates.length, 10);
+    for (const g of gates) assert.equal(g.answer_key, gateAnswerKey(g.key), `gate ${g.key}`);
+  });
+
+  test('saving YES under answer_key is read back as that gate\'s answer', () => {
+    for (const g of evaluateQualifyingGates({}).gates) {
+      const after = evaluateQualifyingGates({ [g.answer_key]: 'yes' }).gates.find((x) => x.key === g.key);
+      assert.equal(after.answer, 'yes', `gate ${g.key}`);
+    }
+  });
+});
+
 describe('qualifying gate evaluation', () => {
   test('all ten YES with evidence is complete', () => {
     const result = evaluateQualifyingGates(qualifyingGateDefaults());
