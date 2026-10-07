@@ -466,6 +466,52 @@ ALTER TABLE qa_thread ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 
 ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared';
 ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS document_id TEXT;
 
+-- External evidence with provenance (BRD v2 INTG-07, INTG-12): every value
+-- from a connected tool or desk research, with its source, time, method and
+-- confidence. L3+ / AI values wait for a person to confirm them.
+CREATE TABLE IF NOT EXISTS evidence_item (
+  id            TEXT PRIMARY KEY,
+  opportunity_id TEXT NOT NULL,
+  owner_org_id  TEXT NOT NULL,
+  field         TEXT NOT NULL,
+  value         JSONB NOT NULL,
+  source        TEXT NOT NULL,
+  source_ref    TEXT,
+  method        TEXT NOT NULL DEFAULT 'manual',
+  confidence    NUMERIC,
+  maturity      TEXT NOT NULL DEFAULT 'L1',
+  retrieved_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  recorded_by   TEXT,
+  recorded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status        TEXT NOT NULL DEFAULT 'confirmed',
+  reviewed_by   TEXT,
+  reviewed_at   TIMESTAMPTZ,
+  review_note   TEXT
+);
+CREATE INDEX IF NOT EXISTS evidence_item_opp_idx ON evidence_item(opportunity_id, field);
+
+-- Tool entitlement register (ACC-02) and launches (usage evidence, ACC-03).
+CREATE TABLE IF NOT EXISTS tool_entitlement (
+  id              TEXT PRIMARY KEY,
+  user_email      TEXT NOT NULL,
+  connector_key   TEXT NOT NULL,
+  seat_type       TEXT NOT NULL DEFAULT 'named',
+  granted_by      TEXT,
+  granted_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_launched_at TIMESTAMPTZ,
+  revoked_at      TIMESTAMPTZ,
+  revoked_by      TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tool_entitlement_active_idx ON tool_entitlement(lower(user_email), connector_key) WHERE revoked_at IS NULL;
+CREATE TABLE IF NOT EXISTS tool_launch (
+  id             TEXT PRIMARY KEY,
+  user_email     TEXT NOT NULL,
+  connector_key  TEXT NOT NULL,
+  opportunity_id TEXT,
+  entitled       BOOLEAN NOT NULL DEFAULT false,
+  launched_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- BRD v2 WF-04 / WF-01: every question has a status (open / answered /
 -- closed), a due date and an owner. 'kind' separates a plain clarification
 -- from the formal information request that moves the opportunity to

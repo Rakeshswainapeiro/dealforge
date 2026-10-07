@@ -444,6 +444,7 @@ const TIMELINE_LABELS = {
   scorecard_scored: 'Scorecard recorded', scorecard_override: 'CIO override recorded', sufficiency_override: 'Sufficiency flag overridden',
   theme_exception: 'Theme exception recorded', dataroom_link_set: 'Data-room link set', dataroom_link_cleared: 'Data-room link cleared',
   statement_model_parsed: 'Financial model parsed', state_migrated: 'State migrated',
+  evidence_recorded: 'External evidence recorded', evidence_confirmed: 'External evidence confirmed', evidence_rejected: 'External evidence rejected',
 };
 
 /** The opportunity timeline: who did what, when (AUD-01/02). */
@@ -462,6 +463,7 @@ export async function opportunityTimeline(id, actor) {
   const NOISE = new Set(['notify', 'notification', 'read', 'download', 'screening_snapshot']);
   for (const e of events) {
     if (NOISE.has(e.action)) continue;
+    if (!isReviewer(actor) && String(e.action).startsWith('evidence_')) continue;
     const after = e.after || {};
     if (!seeInternal && (after.visibility === 'internal' || internal.has(after.thread_id))) continue;
     out.push({

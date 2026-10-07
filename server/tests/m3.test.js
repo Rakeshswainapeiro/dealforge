@@ -1790,3 +1790,74 @@ describe('My Work queue and Opportunity 360 (EXP-01 / EXP-02)', () => {
     assert.ok(!lead.data.events.some((e) => e.action === 'qa_thread_open'), 'the internal question is not on the subsidiary timeline');
   });
 });
+
+describe('connectors, evidence and tool launchpad (INTG-07/11/12, EXP-03, ACC-01/02/04)', () => {
+  test('evidence is recorded with provenance; a tool import goes through the field map', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const url = '/api/evidence/opportunities/' + draft.id;
+    const manual = await api(url, { method: 'POST', user: 'user-sirius-deal-lead', body: { field: 'revenue_aed_mn', value: 88, source: 'Annual report 2025', method: 'manual', confidence: 0.9 } });
+    assert.equal(manual.status, 201, JSON.stringify(manual.data));
+    assert.equal(manual.data.status, 'confirmed');
+    assert.ok(manual.data.retrieved_at && manual.data.recorded_by === 'deal.lead@sirius.local');
+    const subsidiary = await api(url, { user: 'user-deal-lead' });
+    assert.equal(subsidiary.status, 403, 'evidence is the investment team\'s material');
+
+    // A disabled connector exchanges no data.
+    const off = await api(url + '/import', { method: 'POST', user: 'user-sirius-deal-lead', body: { connector: 'grata', payload: { employee_count: 10 } } });
+    assert.equal(off.status, 409);
+    const cfg = await api('/api/connectors', { user: 'user-admin' });
+    const connectors = cfg.data.config.connectors.map((c) => (c.key === 'grata' ? { ...c, enabled: true } : c));
+    const saved = await api('/api/connectors', { method: 'PUT', user: 'user-admin', body: { connectors } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    const denied = await api('/api/connectors', { method: 'PUT', user: 'user-sirius-deal-lead', body: { connectors } });
+    assert.equal(denied.status, 403);
+    const imported = await api(url + '/import', { method: 'POST', user: 'user-sirius-deal-lead', body: { connector: 'grata', payload: { employee_count: 310, ceo_name: 'X' }, source_ref: 'grata:company/123' } });
+    assert.equal(imported.status, 201, JSON.stringify(imported.data));
+    assert.equal(imported.data.items[0].field, 'employees');
+    assert.equal(imported.data.items[0].source, 'grata');
+    assert.deepEqual(imported.data.unmapped, ['ceo_name']);
+  });
+
+  test('an AI / L3 value waits for someone else to confirm it (INTG-12)', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const ai = await api('/api/evidence/opportunities/' + draft.id, { method: 'POST', user: 'user-sirius-deal-lead', body: { field: 'market_size_aed_mn', value: 1200, source: 'perplexity', method: 'ai', confidence: 0.5 } });
+    assert.equal(ai.data.status, 'proposed');
+    assert.equal(ai.data.maturity, 'L3');
+    const self = await api('/api/evidence/' + ai.data.id + '/confirm', { method: 'POST', user: 'user-sirius-deal-lead', body: {} });
+    assert.equal(self.status, 403);
+    const ok = await api('/api/evidence/' + ai.data.id + '/confirm', { method: 'POST', user: 'user-vertical-head', body: { note: 'Checked against two reports' } });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.data.status, 'confirmed');
+    assert.equal(ok.data.reviewed_by, 'vertical.head@sirius.local');
+  });
+
+  test('the launchpad opens tools in context and never blocks a user (ACC-04)', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const pad = await api('/api/tools/launchpad?opportunity_id=' + draft.id, { user: 'user-sirius-deal-lead' });
+    assert.equal(pad.status, 200);
+    const grata = pad.data.tools.find((x) => x.key === 'grata');
+    assert.equal(grata.entitled, true, 'the seeded seat is recognised');
+    assert.match(grata.launch_url, /query=DigitalCo%20LLC/);
+    for (const user of ['user-sirius-deal-lead', 'user-cio']) {
+      const launch = await api('/api/tools/grata/launch', { method: 'POST', user, body: { opportunity_id: draft.id } });
+      assert.equal(launch.status, 200, 'launch is never denied by the portal');
+      assert.ok(launch.data.url);
+    }
+  });
+
+  test('admins keep the entitlement register', async (t) => {
+    if (!online) return t.skip('server offline');
+    const grant = await api('/api/tools/entitlements', { method: 'POST', user: 'user-admin', body: { user_email: 'fahad@sirius.local', connector_key: 'kira' } });
+    assert.equal(grant.status, 201, JSON.stringify(grant.data));
+    const dup = await api('/api/tools/entitlements', { method: 'POST', user: 'user-admin', body: { user_email: 'fahad@sirius.local', connector_key: 'kira' } });
+    assert.equal(dup.status, 409);
+    const list = await api('/api/tools/entitlements', { user: 'user-admin' });
+    assert.ok(list.data.items.some((e) => e.id === grant.data.id && e.status === 'active'));
+    assert.equal((await api('/api/tools/entitlements', { user: 'user-sirius-deal-lead' })).status, 403);
+    const revoke = await api('/api/tools/entitlements/' + grant.data.id, { method: 'DELETE', user: 'user-admin' });
+    assert.equal(revoke.status, 200);
+  });
+});

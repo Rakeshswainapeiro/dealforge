@@ -7,10 +7,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/AuthContext";
+
+// The Sirius investment team (mirrors REVIEWER_ROLES on the server).
+const TEAM_ROLES = ["admin", "sirius_deal_lead", "sirius_vertical_head", "cio", "leadership", "cluster_head"];
 import OwnerPanel from "@/components/pipeline/OwnerPanel";
 import QuestionsPanel from "@/components/pipeline/QuestionsPanel";
+import { EvidencePanel, LaunchpadPanel } from "@/components/pipeline/EvidencePanel";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Clock, FileText, History, Layers, Loader2, ShieldAlert, XCircle,
+  AlertTriangle, ArrowLeft, CheckCircle2, Clock, Database, ExternalLink, FileText, History, Layers, Loader2, ShieldAlert, XCircle,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +59,8 @@ function Section({ icon: Icon, title, description, children, testid }) {
 }
 
 export default function Opportunity() {
+  const { user } = useAuth();
+  const isTeam = (user?.roles || (user?.role ? [user.role] : [])).some((r) => TEAM_ROLES.includes(r));
   const id = useMemo(() => {
     try { return new URLSearchParams(window.location.search).get("id"); } catch { return null; }
   }, []);
@@ -156,6 +163,12 @@ export default function Opportunity() {
               })}
             </Section>
 
+            {isTeam && (
+              <Section icon={Database} title="External evidence" description="Values from connected tools and desk research, each with source, time, method and confidence." testid="opp-evidence">
+                <EvidencePanel opportunityId={card.id} />
+              </Section>
+            )}
+
             <Section icon={History} title="Timeline" description="Every change, decision and upload, with who and when." testid="opp-timeline">
               {events.length === 0 ? <p className="text-sm text-slate-500">No events yet.</p> : (
                 <ul className="space-y-2">
@@ -197,6 +210,12 @@ export default function Opportunity() {
                 ))}</ul>
               ) : <p className="text-xs text-slate-500">No open disqualifier flags.</p>}
             </Section>
+
+            {isTeam && (
+              <Section icon={ExternalLink} title="Tools" description="Open a licensed tool with this opportunity in context." testid="opp-tools">
+                <LaunchpadPanel opportunityId={card.id} />
+              </Section>
+            )}
 
             <Section icon={FileText} title="Documents" description="Current versions; earlier versions are kept." testid="opp-documents">
               {documents.length === 0 ? <p className="text-sm text-slate-500">No documents uploaded.</p> : (

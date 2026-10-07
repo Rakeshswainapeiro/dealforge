@@ -407,6 +407,41 @@ async function seedOne(spec, owners) {
 }
 
 // Load the MVP fixtures. Returns a summary; idempotent by stable id.
+// Sample tool seats and external evidence (ACC-02, INTG-07), so the launchpad,
+// the entitlement register and the evidence panel have something to show.
+async function ensureFixtureConnectors() {
+  const seats = [
+    ['deal.lead@sirius.local', 'grata'], ['deal.lead@sirius.local', 'pitchbook'], ['deal.lead@sirius.local', 'perplexity'],
+    ['vertical.head@sirius.local', 'pitchbook'], ['cio@sirius.local', 'bloomberg_sparks'],
+  ];
+  for (const [email, key] of seats) {
+    await pool.query(
+      "INSERT INTO tool_entitlement (id, user_email, connector_key, granted_by) VALUES ($1,$2,$3,'seed') " +
+        'ON CONFLICT (lower(user_email), connector_key) WHERE revoked_at IS NULL DO NOTHING',
+      ['seed-seat-' + key + '-' + email.split('@')[0].replace(/\W/g, ''), email, key]
+    );
+  }
+  const { rows } = await pool.query("SELECT id, owner_org_id FROM entity_record WHERE entity = 'DealOpportunity' AND id = 'seed-inf-vision' AND deleted = false LIMIT 1");
+  const opp = rows[0];
+  if (!opp) return 0;
+  const items = [
+    ['employees', 420, 'grata', 'api', 0.8, 'L1', 'confirmed'],
+    ['ownership', 'Founder-owned, no institutional investors', 'grata', 'api', 0.7, 'L1', 'confirmed'],
+    ['comparable_multiple', 11.5, 'pitchbook', 'api', 0.9, 'L1', 'confirmed'],
+    ['market_size_aed_mn', 2600, 'perplexity', 'ai', 0.6, 'L3', 'proposed'],
+  ];
+  let n = 0;
+  for (const [field, value, source, method, confidence, maturity, status] of items) {
+    const { rowCount } = await pool.query(
+      "INSERT INTO evidence_item (id, opportunity_id, owner_org_id, field, value, source, source_ref, method, confidence, maturity, recorded_by, status, retrieved_at) " +
+        "VALUES ($1,$2,$3,$4,$5,$6,'sample',$7,$8,$9,'deal.lead@sirius.local',$10, now() - interval '2 days') ON CONFLICT (id) DO NOTHING",
+      ['seed-ev-' + field, opp.id, opp.owner_org_id, field, JSON.stringify(value), source, method, confidence, maturity, status]
+    );
+    n += rowCount;
+  }
+  return n;
+}
+
 export async function seedMvpData({ force = false } = {}) {
   const { rows } = await pool.query(
     "SELECT count(*)::int AS n FROM entity_record WHERE entity = 'DealOpportunity' AND deleted = false AND (data->>'seed') = 'true'"
@@ -419,6 +454,7 @@ export async function seedMvpData({ force = false } = {}) {
       console.error('[mvpSeed] Q&A fixture seed failed:', err.message);
       return 0;
     });
+    await ensureFixtureConnectors().catch((err) => console.error('[mvpSeed] connector fixture seed failed:', err.message));
     return { skipped: true, count: rows[0].n, strategy_documents: strategyDocs, qa_threads: qaThreads };
   }
 
@@ -447,6 +483,7 @@ export async function seedMvpData({ force = false } = {}) {
     console.error('[mvpSeed] Q&A fixture seed failed:', err.message);
     return 0;
   });
+  await ensureFixtureConnectors().catch((err) => console.error('[mvpSeed] connector fixture seed failed:', err.message));
 
   const summary = {
     skipped: false,

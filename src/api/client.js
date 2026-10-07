@@ -1809,7 +1809,30 @@ const routing = {
   },
 };
 
+// Connectors, evidence with provenance, tool launchpad and entitlements
+// (INTG-07/11/12, EXP-03, ACC-01/02/04).
+const connectors = {
+  get() { return serverFetch('/api/connectors'); },
+  save(config) { return serverFetch('/api/connectors', { method: 'PUT', body: JSON.stringify(config) }); },
+};
+const evidence = {
+  list(opportunityId) { return serverFetch(`/api/evidence/opportunities/${encodeURIComponent(opportunityId)}`); },
+  add(opportunityId, item) { return serverFetch(`/api/evidence/opportunities/${encodeURIComponent(opportunityId)}`, { method: 'POST', body: JSON.stringify(item) }); },
+  confirm(id, note) { return serverFetch(`/api/evidence/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({ note }) }); },
+  reject(id, note) { return serverFetch(`/api/evidence/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ note }) }); },
+};
+const tools = {
+  launchpad(opportunityId) { return serverFetch('/api/tools/launchpad' + (opportunityId ? `?opportunity_id=${encodeURIComponent(opportunityId)}` : '')); },
+  launch(key, opportunityId) { return serverFetch(`/api/tools/${encodeURIComponent(key)}/launch`, { method: 'POST', body: JSON.stringify({ opportunity_id: opportunityId || undefined }) }); },
+  entitlements() { return serverFetch('/api/tools/entitlements'); },
+  grant(userEmail, connectorKey) { return serverFetch('/api/tools/entitlements', { method: 'POST', body: JSON.stringify({ user_email: userEmail, connector_key: connectorKey }) }); },
+  revoke(id) { return serverFetch(`/api/tools/entitlements/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
+};
+
 export const api = {
+  connectors,
+  evidence,
+  tools,
   routing,
   entities,
   auth,
