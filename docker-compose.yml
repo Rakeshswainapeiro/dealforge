@@ -35,6 +35,10 @@ services:
       RATE_LIMIT_DISABLED: ${RATE_LIMIT_DISABLED:-0}
       # Seed the UAT demo pipeline (idempotent, tagged demo:true) for local UI walks.
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-0}
+      # Seed profile; overrides SEED_DEMO_DATA when set. base = users, org tree and
+      # configuration only (no opportunities); mvp = base + sample pipeline;
+      # off = nothing. Empty = fall back to SEED_DEMO_DATA.
+      SEED_PROFILE: ${SEED_PROFILE:-}
       # Better Auth session secret (required in production).
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dealforge-local-dev-secret-change-me-4d1f8c9e0b2a}
       # Default password seeded for app users so they can sign in.
