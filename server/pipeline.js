@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import express from 'express';
 import { pool } from './db.js';
 import { writeAudit } from './audit.js';
@@ -17,14 +16,13 @@ import { duplicateCountMap, duplicateMatchesFor } from './duplicates.js';
 import { evaluateScreeningPanel } from './config/screeningPanel.js';
 import { loadPortfolioRegisterConfig } from './portfolioRegister.js';
 import { loadStrategyCorpus, getLatestStrategyProfile, recordScreeningSnapshot } from './strategy.js';
-import { loadDecisionReasonConfig } from './decisionReasons.js';
 import { loadDoaConfig } from './doa.js';
 import { resolveAuthority } from './config/doa.js';
 import { loadReviewsFor, loadRelatedPartyConfig as loadRelatedPartyConfigForCards } from './relatedParty.js';
 import { resolveOverlayStatus as resolveRpOverlay } from './config/relatedParty.js';
 import {
   STATES, TRANSITIONS as TRANSITION_RULES, STATE_KEYS, STATE_LABELS, DEFAULT_SLA, BOARD_STATES, OPEN_STATES, FINAL_STATES, transitionMap, normalizeState,
-  availableActions, nextActorFor, isReviewer, isProducerFor, EDITABLE_STATES,
+  availableActions, nextActorFor, EDITABLE_STATES, mayReview,
 } from './config/workflowStates.js';
 import { transitionOpportunity } from './lifecycle.js';
 import { buildDataroomLinkRecord, describeDataroomLink, DATAROOM_LINK_VERSION, DATAROOM_PROVIDERS } from './config/dataroomLink.js';
@@ -38,7 +36,6 @@ import { buildDataroomLinkRecord, describeDataroomLink, DATAROOM_LINK_VERSION, D
 // ---------------------------------------------------------------------------
 
 const OPPORTUNITY_ENTITY = 'DealOpportunity';
-const uuid = () => crypto.randomUUID();
 
 export const PIPELINE_STATES = STATE_KEYS;
 export const TRANSITIONS = transitionMap();
@@ -150,6 +147,7 @@ function opportunityToCard(row, slaByState, actor = null, doaConfig = null, rpCo
     info_request_due_at: data.info_request_due_at || null,
     available_actions: actions,
     can_withdraw: actions.some((a) => a.action === 'withdraw' && a.allowed),
+    can_review: actor ? mayReview(actor, row.owner_org_id, state) : false,
     related_party_overlay: rp && rp.flagged
       ? { status: rp.status, status_label: rp.status_label, blocked: rp.blocked, signed_off: rp.signed_off, version: rp.version, outstanding: rp.outstanding }
       : null,

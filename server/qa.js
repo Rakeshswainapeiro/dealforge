@@ -48,7 +48,7 @@ export async function loadOpportunity(id, actor) {
 
 // The status a person reads (WF-04): open, answered or closed. 'answered'
 // means the formal response is in but the asker has not closed the thread.
-export function threadDisplayStatus(row, now = new Date()) {
+export function threadDisplayStatus(row) {
   if (!row) return null;
   if (row.status !== 'open') return 'closed';
   return row.response_received ? 'answered' : 'open';

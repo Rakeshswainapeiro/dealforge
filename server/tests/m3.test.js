@@ -221,7 +221,9 @@ describe('theme alignment (J3)', () => {
 
   test('an out-of-theme submission is flagged with a reasoned-exception path', async (t) => {
     if (!online) return t.skip('server offline');
-    const { draft } = await makeSubmitted('user-deal-lead', {
+    // The exception is part of the subsidiary's submission, so it is recorded
+    // while the opportunity is still a draft.
+    const { data: draft } = await api('/api/entities/DealOpportunity', { method: 'POST', user: 'user-deal-lead', body: {
       ...FULL_FIELDS,
       opportunity_name: 'Hotel Portfolio Acquisition',
       opportunity_type: 'Acquisition',
@@ -232,7 +234,7 @@ describe('theme alignment (J3)', () => {
       narrative_why_now: 'Tourism spend keeps growing.',
       narrative_why_us: 'We already own resorts.',
       decision_sought: 'Approve diligence.',
-    });
+    } });
     const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
     assert.equal(data.alignment.aligned, false);
     assert.ok(data.alignment.reasons.length > 0);
@@ -247,6 +249,12 @@ describe('theme alignment (J3)', () => {
     assert.equal(recorded.status, 200);
     const { data: history } = await api('/api/themes/exceptions/' + draft.id + '/history', { user: 'user-deal-lead' });
     assert.ok(history.some((h) => h.action === 'theme_exception'));
+    const sibling = await api('/api/themes/exceptions/' + draft.id + '/history', { user: 'user-finstreet-lead' });
+    assert.equal(sibling.status, 403, 'another subsidiary cannot read the history');
+    const sirius = await api('/api/themes/exceptions/' + draft.id, {
+      method: 'POST', user: 'user-sirius-deal-lead', body: { reason: 'Sirius cannot write the subsidiary exception.' },
+    });
+    assert.equal(sirius.status, 403);
   });
 
   test('the AED floor surfaces as a non-blocking signal', async (t) => {
@@ -625,10 +633,8 @@ describe('Gate 1 hard filters (W3-02 / SCR-03)', () => {
   test('a failed filter recommends decline and a reviewer override needs a reason', async (t) => {
     if (!online) return t.skip('server offline');
     // An off-theme sector with no reasoned exception fails the vertical filter.
-    const { data: draft } = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-deal-lead',
-      body: { status: 'draft', ...FULL_FIELDS, sector: 'Industrials', opportunity_name: 'Off-theme probe' },
-    });
+    const { draft, submit } = await makeSubmitted('user-deal-lead', { ...FULL_FIELDS, sector: 'Industrials', opportunity_name: 'Off-theme probe' });
+    assert.equal(submit.state, 'screening_review', 'a failed hard filter recommends; it never blocks submission');
     const status = await api('/api/gate/opportunities/' + draft.id + '/status', { user: 'user-cio' });
     assert.equal(status.data.gate.hard_filters.recommended_outcome, 'recommended_decline');
     assert.ok(status.data.gate.hard_filters.failed.some((f) => f.key === 'designated_vertical'));
@@ -853,14 +859,14 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     const { draft } = await makeSubmitted('user-deal-lead');
 
     const scored = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: ALL4, comments: COMMENTS },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL4, comments: COMMENTS },
     });
     assert.equal(scored.status, 200, JSON.stringify(scored.data));
     assert.equal(scored.data.scorecard.total, 4);
     assert.equal(scored.data.scorecard.outcome, 'proceed');
 
     const below = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: ALL3, comments: COMMENTS },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL3, comments: COMMENTS },
     });
     assert.equal(below.status, 200);
     assert.equal(below.data.scorecard.total, 3);
@@ -886,7 +892,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
     await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: ALL3, comments: COMMENTS },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL3, comments: COMMENTS },
     });
     const forbidden = await api('/api/gate/opportunities/' + draft.id + '/scorecard-override', {
       method: 'POST', user: 'user-deal-lead', body: { by: 'deal.lead@infinia.local', reason: 'A deal lead cannot file the CIO override memo.' },
@@ -908,7 +914,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
       entry_valuation: 2, capital_structure: 2, unit_economics: 2,
     };
     const scored = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores, comments: COMMENTS },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores, comments: COMMENTS },
     });
     assert.equal(scored.status, 200, JSON.stringify(scored.data));
     assert.equal(scored.data.scorecard.total, 3.65);
@@ -939,7 +945,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     // A capture matching every proposal is accepted with no comments.
     const proposed = Object.fromEntries(pre.items.map((i) => [i.key, i.proposed_score]));
     const confirmed = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: proposed },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: proposed },
     });
     assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
     assert.equal(confirmed.data.scorecard.complete, true);
@@ -949,14 +955,14 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     const adjusted = { ...proposed };
     adjusted.revenue_scale = scaleProposal === 5 ? 3 : 5;
     const rejected = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: adjusted },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: adjusted },
     });
     assert.equal(rejected.status, 400);
 
     // The same adjustment with a written comment is accepted and stored.
     const comments = { revenue_scale: 'Scale is strong but below the top decile in this cycle.' };
     const ok = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: adjusted, comments },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: adjusted, comments },
     });
     assert.equal(ok.status, 200, JSON.stringify(ok.data));
     assert.deepEqual(ok.data.scorecard.capture.adjusted, ['revenue_scale']);
@@ -975,7 +981,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     // A captured scorecard stamps the revision in force when it was scored.
     const { draft } = await makeSubmitted('user-deal-lead');
     const captured = await api('/api/gate/opportunities/' + draft.id + '/scorecard', {
-      method: 'POST', user: 'user-deal-lead', body: { scores: ALL4, comments: COMMENTS },
+      method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL4, comments: COMMENTS },
     });
     assert.equal(captured.data.scorecard.capture.version, base.version);
 
@@ -1497,5 +1503,76 @@ describe('Document checklist (W5-01 / DOC-01)', () => {
     assert.ok(cl.blocking_keys.includes('financials'));
     assert.equal(cl.complete, false);
     await api('/api/entities/DealOpportunity/' + draft.id, { method: 'DELETE', user: 'user-deal-lead' });
+  });
+});
+
+
+describe('segregation of duties on reviewer actions (SCR-09)', () => {
+  const ALL4 = {
+    revenue_scale: 4, growth_rate: 4, entry_valuation: 4, ownership_control: 4,
+    capital_structure: 4, path_to_liquidity: 4, unit_economics: 4,
+  };
+  const COMMENTS = Object.fromEntries(Object.keys(ALL4).map((k) => [k, 'Reviewer confirmed the score against the evidence on file.']));
+  const routes = [
+    ['hard-filter-review', { decision: 'confirmed', reason: 'Reviewing my own deal is not allowed.' }],
+    ['soft-filter-review', { decision: 'confirmed', scores: {}, rationales: {} }],
+    ['disqualifier-review', { clears: [{ key: 'sanctions_pep', reviewer: 'x', reason: 'Reviewing my own deal.' }] }],
+    ['scorecard', { scores: {}, comments: {} }],
+  ];
+
+  test('the preparing subsidiary can never record a reviewer action on its own deal', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    for (const [route, body] of routes) {
+      for (const user of ['user-deal-lead', 'user-cfo', 'user-ceo']) {
+        const res = await api('/api/gate/opportunities/' + draft.id + '/' + route, { method: 'POST', user, body });
+        assert.equal(res.status, 403, route + ' as ' + user + ': ' + JSON.stringify(res.data));
+      }
+    }
+  });
+
+  test('IC members and other non-reviewers are refused too', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const res = await api('/api/gate/opportunities/' + draft.id + '/scorecard', { method: 'POST', user: 'user-ic', body: { scores: ALL4, comments: COMMENTS } });
+    assert.equal(res.status, 403);
+  });
+
+  test('reviewer actions wait until the opportunity is with Sirius', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { data: draft } = await api('/api/entities/DealOpportunity', {
+      method: 'POST', user: 'user-deal-lead', body: { ...FULL_FIELDS, opportunity_name: 'SoD draft probe' },
+    });
+    const res = await api('/api/gate/opportunities/' + draft.id + '/scorecard', { method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL4, comments: COMMENTS } });
+    assert.equal(res.status, 409, JSON.stringify(res.data));
+  });
+
+  test('the board card says whether this user may review', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const sirius = await api('/api/pipeline/board', { user: 'user-sirius-deal-lead' });
+    const lead = await api('/api/pipeline/my-opportunities', { user: 'user-deal-lead' });
+    const siriusCard = sirius.data.columns.flatMap((c) => c.items).find((i) => i.id === draft.id);
+    const leadCard = lead.data.items.find((i) => i.id === draft.id);
+    assert.equal(siriusCard.can_review, true);
+    assert.equal(leadCard.can_review, false);
+  });
+
+  test('two reviewers saving at once keep both reviews', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const status = await api('/api/gate/opportunities/' + draft.id + '/status', { user: 'user-cio' });
+    const items = status.data.gate.soft_filters.items;
+    const scores = Object.fromEntries(items.map((i) => [i.key, i.proposed_score || 3]));
+    const rationales = Object.fromEntries(items.map((i) => [i.key, 'Reviewed against the strategy pack.']));
+    const [soft, card] = await Promise.all([
+      api('/api/gate/opportunities/' + draft.id + '/soft-filter-review', { method: 'POST', user: 'user-cio', body: { decision: 'confirmed', scores, rationales } }),
+      api('/api/gate/opportunities/' + draft.id + '/scorecard', { method: 'POST', user: 'user-sirius-deal-lead', body: { scores: ALL4, comments: COMMENTS } }),
+    ]);
+    assert.equal(soft.status, 200, JSON.stringify(soft.data));
+    assert.equal(card.status, 200, JSON.stringify(card.data));
+    const after = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-admin' });
+    assert.ok(after.data.soft_filter_review, 'the soft-filter review survives');
+    assert.ok(after.data.scorecard, 'the scorecard survives');
   });
 });

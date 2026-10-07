@@ -4,7 +4,7 @@ import multer from 'multer';
 import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
-import { canViewOrg, canWriteOrg, isCrossOrgReader, canConfigure } from './rbac.js';
+import { canViewOrg, isCrossOrgReader, canConfigure } from './rbac.js';
 import { saveFile, storageInfo, scopedObjectKey } from './storage.js';
 import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
 import { loadDocumentPolicyConfig } from './documentPolicy.js';
@@ -105,7 +105,8 @@ import {
 import { getOrganization } from './org.js';
 import { notify } from './notify.js';
 import {
-  STATE_KEYS, EDITABLE_STATES, normalizeState, isEditableState, isProducerFor, isReviewer,
+  STATE_KEYS, EDITABLE_STATES, OPEN_STATES, REVIEWER_ROLES, normalizeState, isEditableState, isFinalState,
+  isProducerFor, isReviewer, isAdmin,
 } from './config/workflowStates.js';
 import { withLockedOpportunity, recordSteps, submitSteps } from './lifecycle.js';
 import {
@@ -1428,34 +1429,76 @@ gateRouter.post('/opportunities/:id/submit', async (req, res) => {
   } catch (err) { sendErr(res, err); }
 });
 
+// ---------------------------------------------------------------------------
+// Reviewer actions (SCR-03/04/05, SCO-02/03, DOC-04): segregation of duties.
+//
+// Only the Sirius investment team records a screening review, a scorecard or an
+// override; the subsidiary that prepared the deal never reviews it, even though
+// it can write its own records. Each action runs under a row lock and merges
+// just its own field into the record, so two reviewers saving at once (or a
+// reviewer and a state change) cannot overwrite each other.
+// ---------------------------------------------------------------------------
+function reviewError(status, message, data) {
+  const e = new Error(message); e.status = status; if (data) e.data = data; return e;
+}
+
+/**
+ * Throw unless `actor` may take reviewer action `what` on `row`.
+ *   roles   - restrict to these roles (admin always passes); default the Sirius team
+ *   states  - 'open' (with Sirius, undecided) or 'not_final'
+ */
+export function assertReviewer(actor, row, what, { roles = null, states = 'open' } = {}) {
+  if (!canViewOrg(actor.membership, row.owner_org_id, { descendantIds: actor.descendant_ids, grantedOrgIds: actor.granted_org_ids })) {
+    throw reviewError(403, 'Not permitted to view this opportunity');
+  }
+  const held = actor.roles || [];
+  const allowed = roles ? (isAdmin(actor) || held.some((r) => roles.includes(r))) : isReviewer(actor);
+  if (!allowed) throw reviewError(403, 'Only the Sirius investment team may ' + what);
+  if (!isAdmin(actor) && isProducerFor(actor, row.owner_org_id)) {
+    throw reviewError(403, 'The subsidiary that prepared the opportunity cannot ' + what + ' (segregation of duties)');
+  }
+  const state = normalizeState(row.data?.status);
+  const ok = states === 'not_final' ? !isFinalState(state) : OPEN_STATES.includes(state);
+  if (!ok) {
+    throw reviewError(409, states === 'not_final'
+      ? 'The opportunity is ' + state.replace(/_/g, ' ') + '; the decision is final'
+      : 'Reviewer actions are taken once the opportunity is submitted and before the Gate-1 decision (it is ' + state.replace(/_/g, ' ') + ')', { state });
+  }
+}
+
+// Merge one reviewer field into the locked row.
+async function mergeReviewField(client, row, field, value, actor) {
+  await client.query(
+    'UPDATE entity_record SET data = data || $3::jsonb, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
+    [OPPORTUNITY_ENTITY, row.id, JSON.stringify({ [field]: value }), actor.email]
+  );
+}
+
 // Gate 1 hard-filter reviewer decision (W3-02 / SCR-03, SCR-09). The system
 // recommends decline when a hard filter fails; it never rejects on its own. A
-// reviewer with write access to the owning org either confirms the decline or
-// overrides it, and both require a written reason. The decision is stored on the
-// opportunity and audited so the memo and the history can show who decided what.
+// Sirius reviewer either confirms the decline or overrides it, and both require
+// a written reason. The decision is stored on the opportunity and audited so the
+// memo and the history can show who decided what.
 gateRouter.post('/opportunities/:id/hard-filter-review', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to review the hard filters for this opportunity' });
-    }
-    const review = buildHardFilterReview(req.body || {}, { actor: req.actor });
-    const theme = await getEffectiveTheme(opp.owner_org_id).catch(() => null);
-    const patched = { ...opp.data, [HARD_FILTER_REVIEW_TAG]: review };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id, theme });
-    if (gate.hard_filters?.recommended_outcome !== 'recommended_decline') {
-      return res.status(409).json({ error: 'No hard filter failed, so there is no recommended decline to confirm or override' });
-    }
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'hard_filter_' + review.decision,
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { decision: review.decision, reason: review.reason, failed: (gate.hard_filters.failed || []).map((f) => f.key) },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      assertReviewer(req.actor, opp, 'review the hard filters');
+      const review = buildHardFilterReview(req.body || {}, { actor: req.actor });
+      const theme = await getEffectiveTheme(opp.owner_org_id).catch(() => null);
+      const patched = { ...opp.data, [HARD_FILTER_REVIEW_TAG]: review };
+      const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id, theme });
+      if (gate.hard_filters?.recommended_outcome !== 'recommended_decline') {
+        throw reviewError(409, 'No hard filter failed, so there is no recommended decline to confirm or override');
+      }
+      await mergeReviewField(client, opp, HARD_FILTER_REVIEW_TAG, review, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'hard_filter_' + review.decision,
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { decision: review.decision, reason: review.reason, failed: (gate.hard_filters.failed || []).map((f) => f.key) },
+      });
+      return { ok: true, opportunity_id: opp.id, review, hard_filters: { ...gate.hard_filters, review } };
     });
-    res.json({ ok: true, opportunity_id: opp.id, review, hard_filters: { ...gate.hard_filters, review } });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1471,28 +1514,23 @@ gateRouter.get('/opportunities/:id/hard-filter-review/history', async (req, res)
 // Gate 1 soft-filter reviewer decision (W3-03 / SCR-04). The system proposes a
 // 1-5 score for each of the three soft filters from the structured data; the
 // reviewer confirms or adjusts each score and every score carries a written
-// rationale. Soft filters are scored, never used to kill a deal, so there is no
-// recommended-decline branch here. The decision is stored on the opportunity
-// and audited so the memo and the history can show who decided what.
+// rationale. Soft filters are scored, never used to kill a deal.
 gateRouter.post('/opportunities/:id/soft-filter-review', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to review the soft filters for this opportunity' });
-    }
-    const review = buildSoftFilterReview(req.body || {}, { actor: req.actor });
-    const patched = { ...opp.data, [SOFT_FILTER_REVIEW_TAG]: review };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'soft_filter_' + review.decision,
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { decision: review.decision, scores: review.scores, outcome: gate.soft_filters?.outcome },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      assertReviewer(req.actor, opp, 'review the soft filters');
+      const review = buildSoftFilterReview(req.body || {}, { actor: req.actor });
+      const patched = { ...opp.data, [SOFT_FILTER_REVIEW_TAG]: review };
+      const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
+      await mergeReviewField(client, opp, SOFT_FILTER_REVIEW_TAG, review, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'soft_filter_' + review.decision,
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { decision: review.decision, scores: review.scores, outcome: gate.soft_filters?.outcome },
+      });
+      return { ok: true, opportunity_id: opp.id, review, soft_filters: { ...gate.soft_filters, review } };
     });
-    res.json({ ok: true, opportunity_id: opp.id, review, soft_filters: { ...gate.soft_filters, review } });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1506,41 +1544,35 @@ gateRouter.get('/opportunities/:id/soft-filter-review/history', async (req, res)
 });
 
 // Automatic disqualifier clear (W3-04 / SCR-05). The system raises a named flag
-// and never clears it on its own. A reviewer with write access to the owning org
-// clears one or more flags, each with a named reviewer and a reason, and the
-// clear is stored on the opportunity and audited.
+// and never clears it on its own. A Sirius reviewer clears one or more flags,
+// each with a named reviewer and a reason; the clear is stored and audited.
 gateRouter.post('/opportunities/:id/disqualifier-review', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to clear the disqualifier flags for this opportunity' });
-    }
-    const review = buildDisqualifierReview(req.body || {}, { actor: req.actor });
-    const relatedPartySignal = relatedPartyAnswerFromData(opp.data) === 'yes' && isBlank(opp.data.related_party_disclosure)
-      ? { status: 'detected', disclosed: false }
-      : null;
-    const current = evaluateDisqualifiers(opp.data, { relatedParty: relatedPartySignal });
-    const flags = current.flagged.map((f) => f.key);
-    const unknown = review.clears.map((c) => c.key).filter((k) => !flags.includes(k));
-    if (unknown.length) {
-      return res.status(409).json({ error: 'No flag is raised for: ' + unknown.join(', ') });
-    }
-    // Merge with any earlier clears so a second call adds rather than replaces.
-    const prior = Array.isArray(opp.data[DISQUALIFIER_REVIEW_TAG]?.cleared) ? opp.data[DISQUALIFIER_REVIEW_TAG].cleared : [];
-    const merged = prior.filter((c) => !review.clears.some((n) => n.key === c.key)).concat(review.clears);
-    const tagged = { clears: merged, cleared: merged, by: review.by, at: review.at };
-    const patched = { ...opp.data, [DISQUALIFIER_REVIEW_TAG]: tagged };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'disqualifier_cleared',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { cleared: review.clears.map((c) => c.key), remaining: gate.disqualifiers?.open_flags?.map((f) => f.key) || [], by: review.by },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      assertReviewer(req.actor, opp, 'clear the disqualifier flags');
+      const review = buildDisqualifierReview(req.body || {}, { actor: req.actor });
+      const relatedPartySignal = relatedPartyAnswerFromData(opp.data) === 'yes' && isBlank(opp.data.related_party_disclosure)
+        ? { status: 'detected', disclosed: false }
+        : null;
+      const current = evaluateDisqualifiers(opp.data, { relatedParty: relatedPartySignal });
+      const flags = current.flagged.map((f) => f.key);
+      const unknown = review.clears.map((c) => c.key).filter((k) => !flags.includes(k));
+      if (unknown.length) throw reviewError(409, 'No flag is raised for: ' + unknown.join(', '));
+      // Merge with any earlier clears so a second call adds rather than replaces.
+      const prior = Array.isArray(opp.data[DISQUALIFIER_REVIEW_TAG]?.cleared) ? opp.data[DISQUALIFIER_REVIEW_TAG].cleared : [];
+      const merged = prior.filter((c) => !review.clears.some((n) => n.key === c.key)).concat(review.clears);
+      const tagged = { clears: merged, cleared: merged, by: review.by, at: review.at };
+      const patched = { ...opp.data, [DISQUALIFIER_REVIEW_TAG]: tagged };
+      const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
+      await mergeReviewField(client, opp, DISQUALIFIER_REVIEW_TAG, tagged, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'disqualifier_cleared',
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { cleared: review.clears.map((c) => c.key), remaining: gate.disqualifiers?.open_flags?.map((f) => f.key) || [], by: review.by },
+      });
+      return { ok: true, opportunity_id: opp.id, review: tagged, disqualifiers: { ...gate.disqualifiers, review: tagged } };
     });
-    res.json({ ok: true, opportunity_id: opp.id, review: tagged, disqualifiers: { ...gate.disqualifiers, review: tagged } });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1554,62 +1586,58 @@ gateRouter.get('/opportunities/:id/disqualifier-review/history', async (req, res
 });
 
 // Gate 2 weighted scorecard capture (W3-05 / SCO-02). The seven criteria are
-// scored 1-5; the weighted total clears a 3.5 pass bar. The capture is stored on
-// the opportunity and audited so the board and the memo show who scored what.
+// scored 1-5 by the Sirius reviewer; the weighted total clears a 3.5 pass bar.
 gateRouter.post('/opportunities/:id/scorecard', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to score the Gate 2 scorecard for this opportunity' });
-    }
-    // The system proposals are computed from the data already on the record so
-    // the capture can keep both the proposal and the final score and enforce a
-    // written comment on any adjustment (W3-07 / SCO-03).
-    const gateProposed = await evaluateGate(opp, { orgId: opp.owner_org_id });
-    const proposals = Object.fromEntries((gateProposed.scorecard?.items || []).map((i) => [i.key, i.proposed_score]));
-    const scConfig = await loadScorecardConfig();
-    const capture = buildScorecard(req.body || {}, { actor: req.actor, proposals, criteria: scConfig.criteria, version: scConfig.version });
-    const patched = { ...opp.data, [SCORECARD_TAG]: capture };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'scorecard_scored',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { scores: capture.scores, proposed_scores: capture.proposed_scores, adjusted: capture.adjusted, total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, version: capture.version },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      assertReviewer(req.actor, opp, 'score the Gate 2 scorecard');
+      // The system proposals are computed from the data already on the record so
+      // the capture can keep both the proposal and the final score and enforce a
+      // written comment on any adjustment (W3-07 / SCO-03).
+      const gateProposed = await evaluateGate(opp, { orgId: opp.owner_org_id });
+      const proposals = Object.fromEntries((gateProposed.scorecard?.items || []).map((i) => [i.key, i.proposed_score]));
+      const scConfig = await loadScorecardConfig();
+      const capture = buildScorecard(req.body || {}, { actor: req.actor, proposals, criteria: scConfig.criteria, version: scConfig.version });
+      const patched = { ...opp.data, [SCORECARD_TAG]: capture };
+      const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
+      await mergeReviewField(client, opp, SCORECARD_TAG, capture, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'scorecard_scored',
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { scores: capture.scores, proposed_scores: capture.proposed_scores, adjusted: capture.adjusted, total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, version: capture.version },
+      });
+      return { ok: true, opportunity_id: opp.id, scorecard: { ...gate.scorecard, capture } };
     });
-    res.json({ ok: true, opportunity_id: opp.id, scorecard: { ...gate.scorecard, capture } });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 
 // The Gate 2 CIO override memo (W3-05 / SCO-02, REQ-GATE-02). A below-bar
-// weighted total cannot proceed to Gate 3 without an explicit CIO override
-// memo: a named CIO and a written reason. Requires the CIO (or admin) role.
+// weighted total cannot proceed without an explicit CIO override memo: a named
+// CIO and a written reason. Requires the CIO (or admin) role.
 gateRouter.post('/opportunities/:id/scorecard-override', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!(req.actor.roles || []).some((r) => r === 'cio' || r === 'admin')) {
-      return res.status(403).json({ error: 'The CIO override memo requires the CIO role' });
-    }
-    const gateBefore = await evaluateGate(opp, { orgId: opp.owner_org_id });
-    if (gateBefore.scorecard?.complete && gateBefore.scorecard.outcome === 'proceed') {
-      return res.status(409).json({ error: 'The weighted total clears the pass bar; no override memo is required' });
-    }
-    const override = buildScorecardOverride(req.body || {}, { actor: req.actor });
-    const patched = { ...opp.data, [SCORECARD_OVERRIDE_TAG]: override };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'scorecard_override',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, by: override.by, reason: override.reason },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      if (!(req.actor.roles || []).some((r) => r === 'cio' || r === 'admin')) {
+        throw reviewError(403, 'The CIO override memo requires the CIO role');
+      }
+      assertReviewer(req.actor, opp, 'record the CIO override memo', { roles: ['cio'] });
+      const gateBefore = await evaluateGate(opp, { orgId: opp.owner_org_id });
+      if (gateBefore.scorecard?.complete && gateBefore.scorecard.outcome === 'proceed') {
+        throw reviewError(409, 'The weighted total clears the pass bar; no override memo is required');
+      }
+      const override = buildScorecardOverride(req.body || {}, { actor: req.actor });
+      const patched = { ...opp.data, [SCORECARD_OVERRIDE_TAG]: override };
+      const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
+      await mergeReviewField(client, opp, SCORECARD_OVERRIDE_TAG, override, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'scorecard_override',
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, by: override.by, reason: override.reason },
+      });
+      return { ok: true, opportunity_id: opp.id, override, scorecard: { ...gate.scorecard, override } };
     });
-    res.json({ ok: true, opportunity_id: opp.id, override, scorecard: { ...gate.scorecard, override } });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1639,37 +1667,29 @@ gateRouter.get('/opportunities/:id/sufficiency', async (req, res) => {
 // reviewer, CIO or admin may override, matching the reviewer-post step.
 gateRouter.post('/opportunities/:id/sufficiency-override', async (req, res) => {
   try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    const roles = req.actor.roles || [];
-    if (!roles.some((r) => ['independent_reviewer', 'reviewer', 'cio', 'admin', 'leadership'].includes(r)) && !canConfigure(req.actor.membership)) {
-      return res.status(403).json({ error: 'A reviewer role is required to override a sufficiency flag' });
-    }
-    const key = String(req.body?.key || '').trim();
-    if (!SUFFICIENCY_RULE_KEYS.includes(key)) {
-      return res.status(400).json({ error: 'Unknown sufficiency rule: ' + (key || '(none)') });
-    }
-    const gateBefore = await evaluateGate(opp, { orgId: opp.owner_org_id });
-    const flagged = (gateBefore.sufficiency?.flags || []).find((f) => f.key === key);
-    if (!flagged) {
-      return res.status(409).json({ error: 'That sufficiency rule is not currently flagged, so there is nothing to override' });
-    }
-    const override = buildSufficiencyOverride(req.body || {}, { actor: req.actor });
-    const existing = sufficiencyOverridesFromData(opp.data);
-    const patched = {
-      ...opp.data,
-      [SUFFICIENCY_OVERRIDE_TAG]: { ...existing, [key]: { ...override, key } },
-    };
-    const gate = await evaluateGate({ ...opp, data: patched }, { orgId: opp.owner_org_id });
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'sufficiency_override',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { key, by: override.by, reason: override.reason, open_flags: gate.sufficiency?.open_count ?? 0 },
+    const out = await withLockedOpportunity(req.params.id, async (client, opp) => {
+      // The Sirius team or the independent reviewer; never the preparer.
+      assertReviewer(req.actor, opp, 'override a sufficiency flag', {
+        roles: [...REVIEWER_ROLES, 'independent_reviewer'], states: 'not_final',
+      });
+      const key = String(req.body?.key || '').trim();
+      if (!SUFFICIENCY_RULE_KEYS.includes(key)) throw reviewError(400, 'Unknown sufficiency rule: ' + (key || '(none)'));
+      const gateBefore = await evaluateGate(opp, { orgId: opp.owner_org_id });
+      const flagged = (gateBefore.sufficiency?.flags || []).find((f) => f.key === key);
+      if (!flagged) throw reviewError(409, 'That sufficiency rule is not currently flagged, so there is nothing to override');
+      const override = buildSufficiencyOverride(req.body || {}, { actor: req.actor });
+      const existing = sufficiencyOverridesFromData(opp.data);
+      const value = { ...existing, [key]: { ...override, key } };
+      const gate = await evaluateGate({ ...opp, data: { ...opp.data, [SUFFICIENCY_OVERRIDE_TAG]: value } }, { orgId: opp.owner_org_id });
+      await mergeReviewField(client, opp, SUFFICIENCY_OVERRIDE_TAG, value, req.actor);
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'sufficiency_override',
+        actor: req.actor, orgId: opp.owner_org_id,
+        after: { key, by: override.by, reason: override.reason, open_flags: gate.sufficiency?.open_count ?? 0 },
+      });
+      return { ok: true, opportunity_id: opp.id, override, sufficiency: gate.sufficiency };
     });
-    res.json({ ok: true, opportunity_id: opp.id, override, sufficiency: gate.sufficiency });
+    res.json(out);
   } catch (err) { sendErr(res, err); }
 });
 

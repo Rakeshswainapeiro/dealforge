@@ -940,6 +940,10 @@ export default function ScreeningBoard() {
                           </p>
                           <p className="mt-0.5 text-slate-600">{review.reason} — {review.by || "unknown"}</p>
                         </div>
+                      ) : !selectedCard?.can_review ? (
+                        <p className="text-xs text-slate-500" data-testid="review-readonly">
+                          Recorded by the Sirius reviewer once the opportunity is with Sirius.
+                        </p>
                       ) : (
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-2">
@@ -1027,6 +1031,10 @@ export default function ScreeningBoard() {
                           </ul>
                           <p className="text-slate-500">Recorded by {review.by || "unknown"}</p>
                         </div>
+                      ) : !selectedCard?.can_review ? (
+                        <p className="text-xs text-slate-500" data-testid="review-readonly">
+                          Recorded by the Sirius reviewer once the opportunity is with Sirius.
+                        </p>
                       ) : (
                         <div className="space-y-2">
                           {items.map((item) => (
@@ -1153,7 +1161,7 @@ export default function ScreeningBoard() {
                               </span>
                             </div>
                             <p className="mt-0.5 text-slate-500">{item.rationale}</p>
-                            {item.status === "flagged" && !clearedKeys.has(item.key) && (
+                            {item.status === "flagged" && !clearedKeys.has(item.key) && selectedCard?.can_review && (
                               <div className="mt-1.5 space-y-1">
                                 <Textarea
                                   rows={1}
@@ -1185,7 +1193,7 @@ export default function ScreeningBoard() {
                           </li>
                         ))}
                       </ul>
-                      {openFlags.length > 0 && (
+                      {openFlags.length > 0 && selectedCard?.can_review && (
                         <Button
                           size="sm"
                           disabled={disqualifierMutation.isPending || canClear.length === 0}
@@ -1307,6 +1315,7 @@ export default function ScreeningBoard() {
                           </div>
                         ))}
                       </div>
+                      {selectedCard?.can_review && (
                       <Button
                         size="sm"
                         disabled={scorecardMutation.isPending || !allScored || !allCommented}
@@ -1325,6 +1334,7 @@ export default function ScreeningBoard() {
                       >
                         Record scorecard{totalPreview != null ? " (" + totalPreview + "/5)" : ""}
                       </Button>
+                      )}
                       {Array.isArray(sc.lenses) && sc.lenses.length > 0 && (
                         <div className="space-y-1.5 rounded-md border border-slate-200 bg-white p-2" data-testid="scorecard-lenses">
                           <p className="text-xs font-medium text-slate-800">
@@ -1359,7 +1369,7 @@ export default function ScreeningBoard() {
                           ))}
                         </div>
                       )}
-                      {sc.outcome === "override_required" && (
+                      {sc.outcome === "override_required" && selectedCard?.can_review && (
                         <div className="space-y-1.5 rounded-md border border-red-200 bg-white p-2" data-testid="scorecard-override">
                           <p className="text-xs font-medium text-red-700">
                             {sc.below_lens_floor

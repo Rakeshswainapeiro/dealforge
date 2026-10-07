@@ -78,9 +78,6 @@ async function attachDocuments(id, user = 'user-deal-lead') {
   }
 }
 
-function act(id, user, body = {}) {
-  return api('/api/workflows/route/' + id + '/act', { method: 'POST', user, body });
-}
 
 // Each journey records a sign-off row so a run reads as a UAT script sheet.
 function journey(id, title, fn) {

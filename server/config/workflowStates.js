@@ -239,6 +239,15 @@ export function availableActions({ state, actor, ownerOrgId, doa = null, blocks 
   return out;
 }
 
+// May `actor` record a screening review, scorecard or override on a record in
+// `state` owned by `ownerOrgId`? The Sirius team (or an admin), never the
+// subsidiary that prepared it, and only while it is with Sirius (SCR-09).
+export function mayReview(actor, ownerOrgId, state) {
+  if (!isReviewer(actor)) return false;
+  if (!isAdmin(actor) && isProducerFor(actor, ownerOrgId)) return false;
+  return OPEN_STATES.includes(normalizeState(state));
+}
+
 // Who is expected to act next on a record in `state` (shown on cards and used
 // by the My Work queue).
 export function nextActorFor(state) {
@@ -249,6 +258,7 @@ export function nextActorFor(state) {
 }
 
 export default {
+  mayReview,
   STATES, STATE_KEYS, STATE_LABELS, FINAL_STATES, SYSTEM_STATES, EDITABLE_STATES, BOARD_STATES, OPEN_STATES,
   SUBMIT_CHAIN, TRANSITIONS, LEGACY_STATE_MAP, DEFAULT_SLA, PRODUCER_ROLES, REVIEWER_ROLES,
   normalizeState, isKnownState, isFinalState, isEditableState, findTransition, transitionsFrom, transitionMap,

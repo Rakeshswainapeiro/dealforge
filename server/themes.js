@@ -3,7 +3,8 @@ import express from 'express';
 import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
-import { canConfigure, canViewOrg, canWriteOrg } from './rbac.js';
+import { canConfigure, canViewOrg } from './rbac.js';
+import { isProducerFor, isEditableState, normalizeState } from './config/workflowStates.js';
 import { DERIVED_THEMES } from './config/derivedThemes.js';
 import { WACC_DEFAULT_PCT } from './config/wacc.js';
 import { computeHurdles, HURDLE_DEFAULTS } from './config/hurdleTable.js';
@@ -428,18 +429,23 @@ themesRouter.post('/exceptions/:opportunityId', async (req, res) => {
     );
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'Opportunity not found' });
-    if (!canWriteOrg(req.actor.membership, row.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to record an exception for this opportunity' });
+    // The reasoned exception is part of the subsidiary's submission: only the
+    // owning subsidiary records it, and only while it can still edit (WF-01).
+    if (!isProducerFor(req.actor, row.owner_org_id)) {
+      return res.status(403).json({ error: 'Only the owning subsidiary can record a theme exception for this opportunity' });
     }
-    const patched = {
-      ...row.data,
+    const state = normalizeState(row.data?.status);
+    if (!isEditableState(state)) {
+      return res.status(409).json({ error: 'The opportunity is locked while it is ' + state.replace(/_/g, ' '), state });
+    }
+    const patch = {
       theme_exception_reason: reason,
       theme_exception_by: req.actor.email,
       theme_exception_at: new Date().toISOString(),
     };
     await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      ['DealOpportunity', row.id, JSON.stringify(patched), req.actor.email]
+      'UPDATE entity_record SET data = data || $3::jsonb, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
+      ['DealOpportunity', row.id, JSON.stringify(patch), req.actor.email]
     );
     await writeAudit({
       entity: 'DealOpportunity', entityId: row.id, action: 'theme_exception',
@@ -452,7 +458,17 @@ themesRouter.post('/exceptions/:opportunityId', async (req, res) => {
 // Alignment audit trail for an opportunity.
 themesRouter.get('/exceptions/:opportunityId/history', async (req, res) => {
   try {
-    res.json(await listAuditEvents({ entity: 'DealOpportunity', entityId: req.params.opportunityId, limit: 50 }));
+    const { rows } = await pool.query(
+      'SELECT owner_org_id FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false',
+      ['DealOpportunity', req.params.opportunityId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Opportunity not found' });
+    if (!canViewOrg(req.actor.membership, rows[0].owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
+      return res.status(403).json({ error: 'Not permitted to view this opportunity' });
+    }
+    // Only the alignment events, not the whole record history.
+    const events = await listAuditEvents({ entity: 'DealOpportunity', entityId: req.params.opportunityId, limit: 50 });
+    res.json(events.filter((e) => String(e.action || '').startsWith('theme_')));
   } catch (err) { sendErr(res, err); }
 });
 
