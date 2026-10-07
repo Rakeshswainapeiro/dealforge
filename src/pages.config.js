@@ -24,6 +24,8 @@ import OpportunityRoute from './pages/OpportunityRoute';
 import Reporting from './pages/Reporting';
 import PipelineDashboard from './pages/PipelineDashboard';
 import PipelineMetrics from './pages/PipelineMetrics';
+import MyWork from './pages/MyWork';
+import Opportunity from './pages/Opportunity';
 import __Layout from './Layout.jsx';
 
 
@@ -42,12 +44,14 @@ export const PAGES = {
     "Reporting": Reporting,
     "PipelineDashboard": PipelineDashboard,
     "PipelineMetrics": PipelineMetrics,
+    "MyWork": MyWork,
+    "Opportunity": Opportunity,
 }
 
 export const pagesConfig = {
-    // Every role lands on the Screening Board: Sirius users see the whole
-    // pipeline, subsidiary users see only their own entity's opportunities.
-    mainPage: "ScreeningBoard",
+    // Every role lands on My Work (EXP-02): what is waiting on them. The
+    // Opportunity 360 page (EXP-01) is routable but not in the menu.
+    mainPage: "MyWork",
     Pages: PAGES,
     Layout: __Layout,
 };

@@ -1745,3 +1745,48 @@ describe('Q&A threads: owner, due date, inbox and documents (WF-04 / EXP-04)', (
     assert.equal(dl.status, 403);
   });
 });
+
+describe('My Work queue and Opportunity 360 (EXP-01 / EXP-02)', () => {
+  test('the owner sees a new submission in My Work with its SLA', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const work = await api('/api/pipeline/my-work', { user: 'user-sirius-deal-lead' });
+    assert.equal(work.status, 200);
+    const item = work.data.assigned.find((c) => c.id === draft.id);
+    assert.ok(item, 'assigned to the Sirius deal lead');
+    assert.ok(item.sla_due_at);
+    assert.ok(work.data.counts.assigned >= 1);
+  });
+
+  test('the subsidiary sees its information requests and the questions to answer', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const ask = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
+      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'information_requested', question: { subject: 'Capex plan', body: 'Phase the capex by year.' } },
+    });
+    assert.equal(ask.status, 200, JSON.stringify(ask.data));
+    const work = await api('/api/pipeline/my-work', { user: 'user-deal-lead' });
+    assert.ok(work.data.subsidiary.some((c) => c.id === draft.id && c.state === 'information_requested'));
+    assert.ok(work.data.questions.some((q) => q.id === ask.data.thread_id));
+    const sirius = await api('/api/pipeline/my-work', { user: 'user-sirius-deal-lead' });
+    assert.ok(!sirius.data.questions.some((q) => q.id === ask.data.thread_id), 'the asker waits for the answer');
+  });
+
+  test('the 360 card and timeline are scoped and tell the story', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    await api('/api/qa/opportunities/' + draft.id + '/threads', {
+      method: 'POST', user: 'user-sirius-deal-lead', body: { subject: 'Internal view', body: 'Pricing looks rich.', visibility: 'internal' },
+    });
+    const card = await api('/api/pipeline/opportunities/' + draft.id + '/card', { user: 'user-deal-lead' });
+    assert.equal(card.status, 200);
+    assert.equal(card.data.state, 'screening_review');
+    const sibling = await api('/api/pipeline/opportunities/' + draft.id + '/card', { user: 'user-finstreet-lead' });
+    assert.equal(sibling.status, 403);
+    const sirius = await api('/api/pipeline/opportunities/' + draft.id + '/timeline', { user: 'user-sirius-deal-lead' });
+    const actions = sirius.data.events.map((e) => e.action);
+    for (const a of ['create', 'submit', 'transition_auto', 'owner_assigned', 'upload', 'qa_thread_open']) assert.ok(actions.includes(a), a);
+    const lead = await api('/api/pipeline/opportunities/' + draft.id + '/timeline', { user: 'user-deal-lead' });
+    assert.ok(!lead.data.events.some((e) => e.action === 'qa_thread_open'), 'the internal question is not on the subsidiary timeline');
+  });
+});

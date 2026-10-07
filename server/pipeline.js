@@ -22,9 +22,13 @@ import { loadReviewsFor, loadRelatedPartyConfig as loadRelatedPartyConfigForCard
 import { resolveOverlayStatus as resolveRpOverlay } from './config/relatedParty.js';
 import {
   STATES, TRANSITIONS as TRANSITION_RULES, STATE_KEYS, STATE_LABELS, DEFAULT_SLA, BOARD_STATES, OPEN_STATES, FINAL_STATES, transitionMap, normalizeState,
-  availableActions, nextActorFor, EDITABLE_STATES, mayReview, isReviewer,
+  availableActions, nextActorFor, EDITABLE_STATES, mayReview, isReviewer, isProducerFor,
 } from './config/workflowStates.js';
 import { transitionOpportunity } from './lifecycle.js';
+import { myThreads } from './qa.js';
+import { listAuditEvents } from './audit.js';
+import { loadCommentVisibilityConfig } from './commentVisibility.js';
+import { mayViewVisibility } from './config/commentVisibility.js';
 import { buildDataroomLinkRecord, describeDataroomLink, DATAROOM_LINK_VERSION, DATAROOM_PROVIDERS } from './config/dataroomLink.js';
 
 // ---------------------------------------------------------------------------
@@ -217,7 +221,7 @@ async function questionCounts(ids, actor) {
 
 // Screening board: items by state with owner, age and SLA breach (WF-01/02).
 // owner filter: 'me' (owned by or routed to me), 'unassigned', or an email.
-function ownerFilter(owner, actor) {
+function ownerFilter(owner) {
   const want = String(owner || '').trim().toLowerCase();
   if (!want || want === 'all') return () => true;
   if (want === 'me') return (c) => c.assigned_to_me;
@@ -230,7 +234,7 @@ export async function screeningBoard(actor, { owner } = {}) {
   const doaConfig = await loadDoaConfig();
   const rpConfig = await loadRelatedPartyConfigForCards();
   const rows = await readableOpportunities(actor, { states: BOARD_STATES });
-  const cards = (await cardsFor(actor, rows)).filter(ownerFilter(owner, actor));
+  const cards = (await cardsFor(actor, rows)).filter(ownerFilter(owner));
   // Cross-group duplicate warnings are shown to the Investment Team only
   // (INT-12): a subsidiary preparer never sees a sibling's item.
   if (isCrossOrgReader(actor.membership)) {
@@ -375,6 +379,107 @@ export async function listTransitions(opportunityId) {
 }
 
 // ---------------------------------------------------------------------------
+// My Work (EXP-02) and Opportunity 360 (EXP-01)
+// ---------------------------------------------------------------------------
+
+async function loadVisibleRow(id, actor) {
+  const { rows } = await pool.query('SELECT * FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false', [OPPORTUNITY_ENTITY, id]);
+  const row = rows[0];
+  if (!row) { const e = new Error('Opportunity not found'); e.status = 404; throw e; }
+  if (!canViewOrg(actor.membership, row.owner_org_id, { descendantIds: actor.descendant_ids, grantedOrgIds: actor.granted_org_ids })) {
+    const e = new Error('Not permitted to view this opportunity'); e.status = 403; throw e;
+  }
+  return row;
+}
+
+export async function opportunityCard(id, actor) {
+  const row = await loadVisibleRow(id, actor);
+  const [card] = await cardsFor(actor, [row]);
+  return card;
+}
+
+const DUE_SOON_MS = 24 * 3600 * 1000;
+
+/**
+ * A personal queue: what is owned by or routed to me and waiting on Sirius,
+ * the other moves I can make, the questions waiting on me, my subsidiary's
+ * drafts and information requests, and what is about to breach its SLA.
+ */
+export async function myWork(actor, { now = new Date() } = {}) {
+  const rows = await readableOpportunities(actor, { states: [...OPEN_STATES, 'draft'] });
+  const cards = await cardsFor(actor, rows);
+  const actionable = (c) => c.available_actions.some((a) => a.allowed && a.action !== 'withdraw');
+  const mine = cards.filter((c) => c.is_open && c.assigned_to_me);
+  const others = cards.filter((c) => c.is_open && !c.assigned_to_me && actionable(c) && c.next_actor === 'sirius');
+  // A subsidiary's own to-dos: drafts it can still submit and information
+  // requests it has to answer.
+  const subsidiary = cards.filter((c) => c.editable && isProducerFor(actor, c.owner_org_id) && (c.state === 'draft' || c.state === 'information_requested'));
+  const dueSoon = cards.filter((c) => c.is_open && c.sla_due_at && (c.assigned_to_me || isProducerFor(actor, c.owner_org_id) && c.next_actor === 'subsidiary')
+    && new Date(c.sla_due_at).getTime() - now.getTime() < DUE_SOON_MS);
+  const threads = (await myThreads(actor)).filter((t) => t.awaiting_me);
+  const bySla = (a, b) => String(a.sla_due_at || '9').localeCompare(String(b.sla_due_at || '9'));
+  return {
+    assigned: mine.sort(bySla),
+    can_act: others.sort(bySla),
+    subsidiary: subsidiary.sort((a, b) => (a.state === 'information_requested' ? -1 : 0) - (b.state === 'information_requested' ? -1 : 0)),
+    questions: threads,
+    due_soon: dueSoon.sort(bySla),
+    counts: {
+      assigned: mine.length, can_act: others.length, subsidiary: subsidiary.length,
+      questions: threads.length, due_soon: dueSoon.length,
+      breached: mine.filter((c) => c.sla_breached).length,
+    },
+    generated_at: now.toISOString(),
+  };
+}
+
+// Plain-language labels for the opportunity timeline (AUD-02).
+const TIMELINE_LABELS = {
+  create: 'Created', update: 'Edited', submit: 'Submitted', submit_blocked: 'Submission blocked',
+  transition: 'State changed', transition_auto: 'Automatic step', attestation_recorded: 'Attestation recorded',
+  attestations_invalidated: 'Attestations cleared by an edit', owner_assigned: 'Owner assigned', owner_reassigned: 'Owner re-assigned',
+  qa_thread_open: 'Question raised', gate1_authority_applied: 'Gate-1 authority applied', related_party_overlay_applied: 'Related-party overlay applied',
+  hard_filter_confirmed: 'Hard-filter decline confirmed', hard_filter_overridden: 'Hard-filter decline overridden',
+  soft_filter_confirmed: 'Soft filters confirmed', soft_filter_adjusted: 'Soft filters adjusted', disqualifier_cleared: 'Disqualifier cleared',
+  scorecard_scored: 'Scorecard recorded', scorecard_override: 'CIO override recorded', sufficiency_override: 'Sufficiency flag overridden',
+  theme_exception: 'Theme exception recorded', dataroom_link_set: 'Data-room link set', dataroom_link_cleared: 'Data-room link cleared',
+  statement_model_parsed: 'Financial model parsed', state_migrated: 'State migrated',
+};
+
+/** The opportunity timeline: who did what, when (AUD-01/02). */
+export async function opportunityTimeline(id, actor) {
+  const row = await loadVisibleRow(id, actor);
+  const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: row.id, limit: 300 });
+  const { rows: docs } = await pool.query(
+    "SELECT id, requirement_key, version, original_name, uploaded_by, uploaded_at FROM submission_document WHERE opportunity_id = $1 AND deleted = false",
+    [row.id]
+  );
+  const config = await loadCommentVisibilityConfig();
+  const seeInternal = mayViewVisibility(config, actor, 'internal');
+  const { rows: threads } = await pool.query('SELECT id, visibility FROM qa_thread WHERE opportunity_id = $1', [row.id]);
+  const internal = new Set(threads.filter((t) => t.visibility === 'internal').map((t) => t.id));
+  const out = [];
+  const NOISE = new Set(['notify', 'notification', 'read', 'download', 'screening_snapshot']);
+  for (const e of events) {
+    if (NOISE.has(e.action)) continue;
+    const after = e.after || {};
+    if (!seeInternal && (after.visibility === 'internal' || internal.has(after.thread_id))) continue;
+    out.push({
+      ts: e.ts, action: e.action, label: TIMELINE_LABELS[e.action] || String(e.action || '').replace(/_/g, ' '),
+      actor_email: e.actor_email || null, comment: e.comment || null,
+      from: e.before?.status || null, to: after.status || null,
+    });
+  }
+  for (const d of docs) {
+    if (String(d.requirement_key).startsWith('qa_attachment:') && internal.has(d.requirement_key.split(':')[1]) && !seeInternal) continue;
+    out.push({ ts: d.uploaded_at, action: 'upload', label: 'Document uploaded', actor_email: d.uploaded_by,
+      comment: d.original_name + (d.version > 1 ? ' (v' + d.version + ')' : ''), from: null, to: null });
+  }
+  out.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  return { opportunity_id: row.id, events: out };
+}
+
+// ---------------------------------------------------------------------------
 // HTTP routes — /api/pipeline
 // ---------------------------------------------------------------------------
 export const pipelineRouter = express.Router();
@@ -410,6 +515,18 @@ pipelineRouter.get('/board', async (req, res) => {
 
 pipelineRouter.get('/awaiting-my-review', async (req, res) => {
   try { res.json(await awaitingMyReview(req.actor)); } catch (err) { sendErr(res, err); }
+});
+
+pipelineRouter.get('/my-work', async (req, res) => {
+  try { res.json(await myWork(req.actor)); } catch (err) { sendErr(res, err); }
+});
+
+pipelineRouter.get('/opportunities/:id/card', async (req, res) => {
+  try { res.json(await opportunityCard(req.params.id, req.actor)); } catch (err) { sendErr(res, err); }
+});
+
+pipelineRouter.get('/opportunities/:id/timeline', async (req, res) => {
+  try { res.json(await opportunityTimeline(req.params.id, req.actor)); } catch (err) { sendErr(res, err); }
 });
 
 pipelineRouter.get('/my-opportunities', async (req, res) => {

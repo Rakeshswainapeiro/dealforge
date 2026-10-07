@@ -25,6 +25,7 @@ import {
   FileSpreadsheet,
   Layers,
   Activity,
+  Inbox,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,12 @@ import { Badge } from "@/components/ui/badge";
 // off in server/config/featureFlags.js are hidden by navItemEnabled(), so the
 // later-phase entries at the end only appear when an admin enables them.
 const navigationItems = [
+  {
+    key: "nav.myWork",
+    url: createPageUrl("MyWork"),
+    page: 'MyWork',
+    icon: Inbox,
+  },
   {
     key: "nav.submitOpportunity",
     url: createPageUrl("SubmitOpportunity"),

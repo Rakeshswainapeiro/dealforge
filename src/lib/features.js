@@ -8,6 +8,8 @@
 // Must mirror FEATURE_GROUPS in server/config/featureFlags.js (Phase 1 scope):
 // later-phase pages stay hidden even when the server is unreachable.
 export const CLIENT_FEATURE_DEFAULTS = {
+  MyWork: true,
+  Opportunity: true,
   SubmitOpportunity: true,
   ScreeningBoard: true,
   OpportunityRoute: true,

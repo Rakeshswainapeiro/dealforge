@@ -47,6 +47,7 @@ export const CORE_KEYS = [
   'nav.pipelineMetrics',
   'nav.opportunityRoute',
   'nav.qanda',
+  'nav.myWork',
   'nav.investmentThemes',
   'nav.crm',
   'nav.dueDiligence',

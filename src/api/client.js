@@ -924,6 +924,17 @@ const pipeline = {
     return serverFetch(`/api/pipeline/my-opportunities${qs}`);
   },
 
+  // EXP-02 personal queue and EXP-01 Opportunity 360.
+  myWork() {
+    return serverFetch('/api/pipeline/my-work');
+  },
+  card(opportunityId) {
+    return serverFetch(`/api/pipeline/opportunities/${encodeURIComponent(opportunityId)}/card`);
+  },
+  timeline(opportunityId) {
+    return serverFetch(`/api/pipeline/opportunities/${encodeURIComponent(opportunityId)}/timeline`);
+  },
+
   rollup(orgId) {
     const qs = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
     return serverFetch(`/api/pipeline/rollup${qs}`);

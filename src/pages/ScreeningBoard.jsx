@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { api } from "@/api/client";
+import { createPageUrl } from "@/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -295,7 +296,10 @@ export default function ScreeningBoard() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const [selectedId, setSelectedId] = useState(null);
+  // A card can be deep-linked: /screeningboard?id=<opportunity id>.
+  const [selectedId, setSelectedId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("id"); } catch { return null; }
+  });
   const [selectedSnapshot, setSelectedSnapshot] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [questionSubject, setQuestionSubject] = useState("");
@@ -744,6 +748,10 @@ export default function ScreeningBoard() {
               </Badge>
             )}
           </div>
+          <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-2" data-testid="open-360">
+            <a href={createPageUrl("Opportunity") + "?id=" + selectedCard.id}>Open full view</a>
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -753,6 +761,7 @@ export default function ScreeningBoard() {
             <FileText className="h-4 w-4" />
             Create Sirius memo
           </Button>
+          </div>
         </SheetHeader>
 
         <OwnerPanel card={selectedCard} />

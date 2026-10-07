@@ -21,6 +21,8 @@
 // enables them (Settings > Features) or FEATURE_FLAGS lists them.
 export const FEATURE_GROUPS = {
   // Phase 1
+  MyWork: true,
+  Opportunity: true,
   SubmitOpportunity: true,
   ScreeningBoard: true,
   OpportunityRoute: true,
@@ -45,7 +47,7 @@ export const FEATURE_GROUPS = {
 // Curated groups so administrators can flip whole feature areas at once instead
 // of page by page. Each entry lists the page keys the group toggles.
 export const FEATURE_GROUPS_META = [
-  { key: 'deal_pipeline', label: 'Deal Pipeline', pages: ['SubmitOpportunity', 'ScreeningBoard', 'OpportunityRoute', 'QandA'] },
+  { key: 'deal_pipeline', label: 'Deal Pipeline', pages: ['MyWork', 'Opportunity', 'SubmitOpportunity', 'ScreeningBoard', 'OpportunityRoute', 'QandA'] },
   { key: 'reporting', label: 'Reporting', pages: ['PipelineDashboard', 'PipelineMetrics', 'Reporting', 'MemoPack', 'MemoVerification'] },
   { key: 'data', label: 'Organisation & Themes', pages: ['GroupStructure', 'ThemeAdmin'] },
   { key: 'admin_tools', label: 'Admin Tools', pages: ['SuperAdmin', 'Settings'] },
