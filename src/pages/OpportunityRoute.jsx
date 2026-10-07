@@ -833,6 +833,11 @@ export default function OpportunityRoute() {
               stages, the participants and signatories, what each stage must produce, and where the
               route stands — before you send it forward.
             </p>
+            <p className="mt-2 max-w-3xl text-sm text-slate-500" data-testid="route-scope-note">
+              The approval route prepares the later IC stages. It does not change the Gate-1 screening state:
+              requesting information, holding, declining or proceeding to Gate 2 happen on the Screening Board.
+              The related-party independent sign-off is recorded here.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="gap-1 bg-white text-slate-600 border-slate-200">

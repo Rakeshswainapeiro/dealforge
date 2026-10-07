@@ -295,7 +295,7 @@ export default function Reporting() {
                 <div>
                   <div className="font-medium text-slate-800 mb-2">Stages tracked</div>
                   <div className="flex flex-wrap gap-2">
-                    {["submission", "screening", "refinement", "approval", "returned", "declined", "withdrawn"].map((s) => {
+                    {["screening_review", "information_requested", "on_hold", "proceed_to_gate2", "declined", "withdrawn"].map((s) => {
                       const on = config?.states.includes(s);
                       return (
                         <button
@@ -307,7 +307,7 @@ export default function Reporting() {
                             (on ? "bg-teal-50 border-teal-300 text-teal-700" : "bg-white border-slate-200 text-slate-400")
                           }
                         >
-                          {s}
+                          {s.replace(/_/g, " ")}
                         </button>
                       );
                     })}

@@ -12,20 +12,23 @@ export const PIPELINE_METRICS_VERSION = 'PMT-01.1';
 export const PIPELINE_METRICS_VERSION_PREFIX = 'PMT-01';
 export const PIPELINE_METRICS_DEFAULT_REVISION = 1;
 
-// The funnel, in order. Only the forward path is a funnel; the branch states
-// are tracked separately as the reasons items leave.
+// The funnel, in order (BRD v2 WF-01). Only the forward path is a funnel; the
+// branch states are tracked separately as the reasons items leave. Submitted
+// counts every opportunity that entered screening; the automatic completeness
+// and initial-screening steps are not separate funnel stages.
 export const FUNNEL_STAGES = [
-  { key: 'submission', label: 'Submission' },
-  { key: 'screening', label: 'Screening' },
-  { key: 'refinement', label: 'Refinement' },
-  { key: 'approval', label: 'Approval' },
+  { key: 'submitted', label: 'Submitted' },
+  { key: 'screening_review', label: 'Screening Review' },
+  { key: 'proceed_to_gate2', label: 'Proceed to Gate 2' },
 ];
 
 export const FUNNEL_STAGE_KEYS = FUNNEL_STAGES.map((s) => s.key);
 
-// The branch/terminal states an item may leave the funnel through.
+// The branch/terminal states an item may leave the funnel through, and the
+// loops it may pass through on the way.
 export const BRANCH_STATES = [
-  { key: 'returned', label: 'Returned' },
+  { key: 'information_requested', label: 'Information Requested' },
+  { key: 'on_hold', label: 'On Hold' },
   { key: 'declined', label: 'Declined' },
   { key: 'withdrawn', label: 'Withdrawn' },
 ];

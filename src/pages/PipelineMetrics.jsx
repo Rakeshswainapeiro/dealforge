@@ -13,7 +13,7 @@ const COLORS = ["#0d9488", "#0891b2", "#3b82f6", "#6366f1", "#f59e0b", "#ef4444"
 
 // Funnel & cycle-time metrics (W7-03 / DSH-04). The Investment Team sees how
 // many opportunities reach each forward stage, why the ones that leave are
-// declined / returned / withdrawn, and how long each stage takes against its
+// declined / on hold / withdrawn, and how long each stage takes against its
 // SLA target, for a chosen date range.
 export default function PipelineMetrics() {
   const [range, setRange] = useState("any");

@@ -32,9 +32,9 @@ const FIELDS = {
   total_commitment_aed: 120,
 };
 
-async function makeOpportunity(user = 'user-deal-lead') {
+async function makeOpportunity(user = 'user-deal-lead', extra = {}) {
   const { data } = await api('/api/entities/DealOpportunity', {
-    method: 'POST', user, body: { status: 'draft', ...FIELDS },
+    method: 'POST', user, body: { status: 'draft', ...FIELDS, ...extra },
   });
   return data;
 }
@@ -103,7 +103,9 @@ describe('data-room link API (INTG-01)', () => {
 
   test('a cross-tenant user cannot change the link', async (t) => {
     if (!online) return t.skip('server offline');
-    const opp = await makeOpportunity('user-sirius-deal-lead');
+    // Another subsidiary's record (created by the admin on its behalf).
+    const opp = await makeOpportunity('user-admin', { owner_org_id: 'org-finstreet-limited' });
+    assert.ok(opp && opp.id, JSON.stringify(opp));
     const denied = await api('/api/pipeline/opportunities/' + opp.id + '/dataroom-link', {
       method: 'PUT', user: 'user-deal-lead', body: { url: 'https://app.coneshare.com/s/x' },
     });

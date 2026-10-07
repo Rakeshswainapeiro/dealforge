@@ -39,7 +39,7 @@ export const WEEKLY_COLUMN_KEYS = WEEKLY_COLUMNS.map((c) => c.key);
 // Which pipeline states the weekly IHC tracker carries. The BRD tracker covers
 // the live pipeline (everything not yet settled) plus the decisions taken in
 // the week, so terminal branches are included but labelled.
-export const WEEKLY_STATES = ['submission', 'screening', 'refinement', 'approval', 'returned', 'declined', 'withdrawn'];
+export const WEEKLY_STATES = ['screening_review', 'information_requested', 'on_hold', 'proceed_to_gate2', 'declined', 'withdrawn'];
 
 // Default weekly cadence. Friday 09:00 Asia/Dubai (0 = Sunday .. 5 = Friday).
 export const DEFAULT_SCHEDULE = {

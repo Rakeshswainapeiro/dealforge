@@ -105,6 +105,10 @@ import {
 import { getOrganization } from './org.js';
 import { notify } from './notify.js';
 import {
+  STATE_KEYS, EDITABLE_STATES, normalizeState, isEditableState, isProducerFor, isReviewer,
+} from './config/workflowStates.js';
+import { withLockedOpportunity, recordSteps, submitSteps } from './lifecycle.js';
+import {
   QUALITY_SCORE_CONFIG_KEY, QUALITY_WEIGHT_TOTAL,
   defaultQualityScoreConfig, resolveQualityScoreConfig, validateQualityScoreConfig,
   buildQualityScoreConfig,
@@ -156,9 +160,11 @@ export const OPPORTUNITY_FIELDS = INTAKE_FIELDS.map((f) => ({
 // never blocks a submission.
 export const DEFAULT_DOCUMENT_REQUIREMENTS = fullDocumentRequirements();
 
-// Canonical pipeline states (REQ-PIPE-01). M2 drives draft -> submission.
-export const PIPELINE_STATES = ['draft', 'submission', 'screening', 'refinement', 'approval', 'returned', 'declined'];
-export const SUBMITTABLE_STATES = ['draft', 'returned'];
+// Canonical pipeline states live in config/workflowStates.js (BRD v2 WF-01).
+// Only a draft is submitted; an information request is answered with the
+// 'respond' transition instead of a resubmission.
+export const PIPELINE_STATES = STATE_KEYS;
+export const SUBMITTABLE_STATES = ['draft'];
 
 const uuid = () => crypto.randomUUID();
 
@@ -348,9 +354,17 @@ export async function deleteDocument(id, { actor } = {}) {
   const { rows } = await pool.query('SELECT * FROM submission_document WHERE id = $1 AND deleted = false', [id]);
   const row = rows[0];
   if (!row) return { id };
-  if (!canWriteOrg(actor?.membership, row.owner_org_id, { descendantIds: actor?.descendant_ids || [], grantedOrgIds: actor?.granted_org_ids || [] })) {
-    const err = new Error('Not permitted to delete this document');
+  if (!isProducerFor(actor, row.owner_org_id)) {
+    const err = new Error('Only the owning subsidiary can delete its documents');
     err.status = 403;
+    throw err;
+  }
+  const { rows: oppRows } = await pool.query(
+    "SELECT data->>'status' AS status FROM entity_record WHERE entity = $1 AND id = $2", [OPPORTUNITY_ENTITY, row.opportunity_id]
+  );
+  if (!isEditableState(oppRows[0]?.status)) {
+    const err = new Error('Documents are locked while the opportunity is under review');
+    err.status = 409;
     throw err;
   }
   await pool.query('UPDATE submission_document SET deleted = true, is_current = false WHERE id = $1', [id]);
@@ -770,7 +784,7 @@ gateRouter.use(async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-function sendErr(res, err) { res.status(err.status || 500).json({ error: err.message }); }
+function sendErr(res, err) { res.status(err.status || 500).json({ error: err.message, ...(err.data || {}) }); }
 
 // The capture model, served from configuration so the client form, the gate and
 // the memo render the same six-section Opportunity Overview (INT-06). Readable
@@ -1051,6 +1065,17 @@ async function evaluateSelfScreenFor(data, ownerOrgId) {
   return evaluateSelfScreen(input, { theme });
 }
 
+// Every document type an upload may be filed against: the shipped catalogue,
+// any organisation-specific requirement and the configured checklist.
+async function knownRequirementKeys(opp) {
+  const keys = new Set(DEFAULT_DOCUMENT_REQUIREMENTS.map((d) => d.key));
+  for (const r of await listRequirements(opp.owner_org_id).catch(() => [])) keys.add(r.key);
+  const checklist = await loadDocumentChecklistConfig().catch(() => null);
+  for (const item of checklist?.items || []) if (item?.key) keys.add(item.key);
+  keys.add(STATEMENT_MODEL_REQUIREMENT_KEY);
+  return keys;
+}
+
 async function loadOpportunity(id, actor) {
   const { rows } = await pool.query(
     'SELECT * FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false',
@@ -1104,10 +1129,21 @@ gateRouter.get('/opportunities/:id/documents', async (req, res) => {
 gateRouter.post('/opportunities/:id/documents', upload.single('file'), async (req, res) => {
   try {
     const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to add documents to this opportunity' });
+    if (!isProducerFor(req.actor, opp.owner_org_id)) {
+      return res.status(403).json({ error: 'Only the owning subsidiary can add documents to this opportunity' });
+    }
+    if (!isEditableState(opp.data?.status)) {
+      return res.status(409).json({ error: 'Documents are locked while the opportunity is under review', state: normalizeState(opp.data?.status) });
     }
     const requirementKey = req.body?.requirement_key;
+    // Only a document type the checklist knows about is accepted (DOC-01), so an
+    // upload can never land against a requirement nobody will look at.
+    if (requirementKey) {
+      const known = await knownRequirementKeys(opp);
+      if (!known.has(requirementKey)) {
+        return res.status(400).json({ error: 'Unknown document type: ' + requirementKey, known: [...known] });
+      }
+    }
     const doc = await addDocumentVersion({
       opportunityId: opp.id,
       ownerOrgId: opp.owner_org_id,
@@ -1127,10 +1163,9 @@ gateRouter.post('/opportunities/:id/documents', upload.single('file'), async (re
           filename: req.file.originalname || '',
           mimetype: req.file.mimetype || '',
         });
-        const patched = { ...(opp.data || {}), statement_model: parsed };
         await pool.query(
-          'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-          [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
+          'UPDATE entity_record SET data = data || $3::jsonb, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
+          [OPPORTUNITY_ENTITY, opp.id, JSON.stringify({ statement_model: parsed }), req.actor.email]
         );
         await writeAudit({
           entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'statement_model_parsed',
@@ -1196,18 +1231,16 @@ gateRouter.post('/opportunities/:id/attestations/:key', async (req, res) => {
     if (!spec) return res.status(404).json({ error: 'Unknown attestation "' + req.params.key + '"' });
 
     const opp = await loadOpportunity(req.params.id, req.actor);
-    const canWrite = canWriteOrg(req.actor.membership, opp.owner_org_id, {
-      descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids,
-    });
+    const canWrite = isProducerFor(req.actor, opp.owner_org_id);
     const holdsRole = (req.actor.roles || []).includes(spec.role) || (req.actor.roles || []).includes('admin');
     if (!canWrite || !holdsRole) {
       return res.status(403).json({
         error: 'Only the ' + spec.label + ' for this subsidiary may record this attestation',
       });
     }
-    const state = opp.data?.status || 'draft';
-    if (!SUBMITTABLE_STATES.includes(state)) {
-      return res.status(409).json({ error: 'Attestations can only be recorded on a draft or returned opportunity', state });
+    const state = normalizeState(opp.data?.status);
+    if (!EDITABLE_STATES.includes(state)) {
+      return res.status(409).json({ error: 'Attestations can only be recorded on a draft, or while Sirius has requested information', state });
     }
 
     const texts = await loadAttestationTexts();
@@ -1223,12 +1256,14 @@ gateRouter.post('/opportunities/:id/attestations/:key', async (req, res) => {
       ip: req.ip || req.actor.ip || null,
       text,
     };
-    const existing = opp.data?.attestations && typeof opp.data.attestations === 'object' ? opp.data.attestations : {};
-    const attestations = { ...existing, [spec.key]: record };
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify({ ...opp.data, attestations }), req.actor.email]
+    // Merge this one attestation into the stored set atomically, so the CEO and
+    // CFO signing at the same moment cannot overwrite each other.
+    const { rows: saved } = await pool.query(
+      "UPDATE entity_record SET data = jsonb_set(data, '{attestations}', COALESCE(data->'attestations', '{}'::jsonb) || $3::jsonb), " +
+        "updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2 RETURNING data->'attestations' AS attestations",
+      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify({ [spec.key]: record }), req.actor.email]
     );
+    const attestations = saved[0]?.attestations || { [spec.key]: record };
     await writeAudit({
       entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'attestation_recorded',
       actor: req.actor, orgId: opp.owner_org_id,
@@ -1240,201 +1275,156 @@ gateRouter.post('/opportunities/:id/attestations/:key', async (req, res) => {
   } catch (err) { sendErr(res, err); }
 });
 
-// Submit for screening — the document gate is enforced here, server-side.
-gateRouter.post('/opportunities/:id/submit', async (req, res) => {
-  try {
-    const opp = await loadOpportunity(req.params.id, req.actor);
-    if (!canWriteOrg(req.actor.membership, opp.owner_org_id, { descendantIds: req.actor.descendant_ids, grantedOrgIds: req.actor.granted_org_ids })) {
-      return res.status(403).json({ error: 'Not permitted to submit this opportunity' });
-    }
-    const state = opp.data?.status || 'draft';
-    if (!SUBMITTABLE_STATES.includes(state)) {
-      return res.status(409).json({ error: 'Only a draft or returned opportunity can be submitted', state });
-    }
-    const theme = await getEffectiveTheme(opp.owner_org_id).catch(() => null);
-    const gate = await evaluateGate(opp, { orgId: opp.owner_org_id, theme });
+// The first submission gate that fails, in the order the preparer should fix
+// them, as { status, body, audit } - or null when the submission may proceed.
+// Pure over the evaluated gate so the route, the seed and the bulk import all
+// apply exactly the same rules.
+export function submissionBlocker(gate, state) {
+  const blocked = (body, after, comment) => ({ status: 422, body: { ...body, gate }, audit: { before: { status: state }, after, comment } });
+  // The pre-form self-screen is a hard gate (INT-02): an outside-appetite type,
+  // or a ticket below the floor without the exception route, cannot be submitted.
+  if (gate.self_screen?.blocked) {
+    return blocked({ error: 'Submission blocked: the opportunity did not pass the self-screen', self_screen: gate.self_screen },
+      { self_screen_stops: gate.self_screen.stops.map((x) => x.code) }, 'Self-screen halted the submission (W1-01)');
+  }
+  if (!gate.complete) {
+    return blocked({ error: 'Submission blocked: required information is missing' },
+      { missing: gate.missing.map((m) => m.key) }, 'Document gate blocked submission');
+  }
+  // Below-floor exception route (INT-03): synergy statement and IRR >= 35%.
+  if (gate.below_floor?.applies && !gate.below_floor.satisfied) {
+    return blocked({
+      error: 'Submission blocked: the below-floor exception route needs a synergy statement and an IRR of at least ' + gate.below_floor.irr_threshold + '%',
+      below_floor: gate.below_floor,
+    }, { below_floor_stops: gate.below_floor.stops.map((x) => x.code) }, 'Below-floor exception route not satisfied');
+  }
+  // The ten qualifying gates (INT-08): YES with evidence on every gate.
+  if (!gate.qualifying_gates?.complete) {
+    return blocked({ error: QUALIFYING_GATE_NOT_READY, qualifying_gates: gate.qualifying_gates },
+      { qualifying_gates_blocking: gate.qualifying_gates.blocking.map((g) => g.key) }, 'Qualifying gates not ready (W1-05)');
+  }
+  // CEO + CFO attestations (INT-09).
+  if (!gate.attestations?.complete) {
+    return blocked({ error: ATTESTATION_REQUIRED_MESSAGE, attestations: gate.attestations },
+      { attestations_missing: gate.attestations.missing }, 'CEO/CFO attestations not recorded (W1-06)');
+  }
+  // Greenfield extra tests (INT-10).
+  if (gate.greenfield?.applies && !gate.greenfield.satisfied) {
+    return blocked({ error: GREENFIELD_NOT_READY, greenfield: gate.greenfield },
+      { greenfield_stops: gate.greenfield.stops.map((x) => x.code) }, 'Greenfield extra tests not cleared (W1-07)');
+  }
+  // Sourcing channel (INT-05).
+  if (!gate.sourcing_channel?.satisfied) {
+    return blocked({ error: SOURCING_CHANNEL_MESSAGES.required, sourcing_channel: gate.sourcing_channel },
+      { sourcing_channel_stops: gate.sourcing_channel.stops.map((x) => x.code) }, 'Sourcing channel missing or unrecognised (W1-08)');
+  }
+  // Budget status (FIN-07).
+  if (!gate.budget_status?.satisfied) {
+    return blocked({ error: gate.budget_status.message || BUDGET_MESSAGES.answer_required, budget_status: gate.budget_status },
+      { budget_status_stops: gate.budget_status.stops.map((x) => x.code) }, 'Budget status not satisfied (W2-07)');
+  }
+  return null;
+}
 
-    // The pre-form self-screen is a hard gate (W1-01 / INT-02, REQ-RULE-02/04):
-    // an outside-appetite type, or a ticket below the floor without the
-    // exception route, cannot be submitted at all.
-    if (gate.self_screen?.blocked) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { self_screen_stops: gate.self_screen.stops.map((s) => s.code) },
-        comment: 'Self-screen halted the submission (W1-01)',
-      });
-      return res.status(422).json({
-        error: 'Submission blocked: the opportunity did not pass the self-screen',
-        gate,
-        self_screen: gate.self_screen,
-      });
+// Hooks run inside the submit transaction (e.g. the Sirius owner assignment,
+// WF-02) and after it commits. Registered by modules that must not be imported
+// here to avoid a cycle.
+const submitHooks = { inTransaction: [], afterCommit: [] };
+export function onSubmit({ inTransaction = null, afterCommit = null } = {}) {
+  if (inTransaction) submitHooks.inTransaction.push(inTransaction);
+  if (afterCommit) submitHooks.afterCommit.push(afterCommit);
+}
+
+/**
+ * Submit a draft for screening (WF-01, DOC-03). The record is locked, the full
+ * submission gate is re-evaluated on the locked row, and on success the record
+ * passes through Submitted -> Completeness Check -> Initial Screening to
+ * Screening Review in one transaction, each step recorded. Returns
+ * { ok: true, ... } or { ok: false, status, body } when a gate blocks.
+ */
+export async function submitForScreening(opportunityId, actor, { comment = null } = {}) {
+  const opp = await loadOpportunity(opportunityId, actor);
+  if (!isProducerFor(actor, opp.owner_org_id)) {
+    const e = new Error('Only the owning subsidiary can submit this opportunity'); e.status = 403; throw e;
+  }
+  const outcome = await withLockedOpportunity(opp.id, async (client, row) => {
+    const state = normalizeState(row.data?.status);
+    if (state !== 'draft') {
+      const e = new Error('Only a draft opportunity can be submitted'); e.status = 409; e.data = { state }; throw e;
     }
-    if (!gate.complete) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state }, after: { missing: gate.missing.map((m) => m.key) },
-        comment: 'Document gate blocked submission',
-      });
-      return res.status(422).json({ error: 'Submission blocked: required information is missing', gate });
-    }
-    // The below-floor exception route (W1-02 / INT-03): a sub-floor ticket that
-    // chose the exception must also carry a synergy statement and a base IRR at
-    // or above the 35% bar before it may be submitted.
-    if (gate.below_floor?.applies && !gate.below_floor.satisfied) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { below_floor_stops: gate.below_floor.stops.map((s) => s.code) },
-        comment: 'Below-floor exception route not satisfied',
-      });
-      return res.status(422).json({
-        error: 'Submission blocked: the below-floor exception route needs a synergy statement and an IRR of at least ' + gate.below_floor.irr_threshold + '%',
-        gate,
-        below_floor: gate.below_floor,
-      });
-    }
-    // The ten qualifying gates (W1-05 / INT-08): every gate must be answered YES
-    // with its evidence linked. A single NO - or missing evidence - blocks the
-    // submission with the not-ready message naming the gates still open.
-    if (!gate.qualifying_gates?.complete) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { qualifying_gates_blocking: gate.qualifying_gates.blocking.map((g) => g.key) },
-        comment: 'Qualifying gates not ready (W1-05)',
-      });
-      return res.status(422).json({
-        error: QUALIFYING_GATE_NOT_READY,
-        gate,
-        qualifying_gates: gate.qualifying_gates,
-      });
-    }
-    // The CEO + CFO attestation gate (W1-06 / INT-09): both named attestations
-    // must be recorded before submission. Each carries the person, the
-    // timestamp and the IP captured when it was signed.
-    if (!gate.attestations?.complete) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { attestations_missing: gate.attestations.missing },
-        comment: 'CEO/CFO attestations not recorded (W1-06)',
-      });
-      return res.status(422).json({
-        error: ATTESTATION_REQUIRED_MESSAGE,
-        gate,
-        attestations: gate.attestations,
-      });
-    }
-    // The greenfield extra tests (W1-07 / INT-10): a greenfield / new venture
-    // without a secured funding source (or missing its stage / benefit / thesis)
-    // cannot be submitted. This runs last so the more specific gates above name
-    // their own blockers first.
-    if (gate.greenfield?.applies && !gate.greenfield.satisfied) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { greenfield_stops: gate.greenfield.stops.map((s) => s.code) },
-        comment: 'Greenfield extra tests not cleared (W1-07)',
-      });
-      return res.status(422).json({
-        error: GREENFIELD_NOT_READY,
-        gate,
-        greenfield: gate.greenfield,
-      });
-    }
-    // The sourcing channel is mandatory (W1-08 / INT-05): without a recognised
-    // channel the submission cannot proceed, because the channel drives the
-    // related-party auto-flag and the compressed-timeline indicator.
-    if (!gate.sourcing_channel?.satisfied) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { sourcing_channel_stops: gate.sourcing_channel.stops.map((s) => s.code) },
-        comment: 'Sourcing channel missing or unrecognised (W1-08)',
-      });
-      return res.status(422).json({
-        error: SOURCING_CHANNEL_MESSAGES.required,
-        gate,
-        sourcing_channel: gate.sourcing_channel,
-      });
-    }
-    // Budget status (W2-07 / FIN-07): an off-budget deal must carry its variance
-    // justification (the variance memo is enforced through the document gate
-    // above). Runs after the more specific gates so they name their own blockers
-    // first.
-    if (!gate.budget_status?.satisfied) {
-      await writeAudit({
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
-        actor: req.actor, orgId: opp.owner_org_id,
-        before: { status: state },
-        after: { budget_status_stops: gate.budget_status.stops.map((s) => s.code) },
-        comment: 'Budget status not satisfied (W2-07)',
-      });
-      return res.status(422).json({
-        error: gate.budget_status.message || BUDGET_MESSAGES.answer_required,
-        gate,
-        budget_status: gate.budget_status,
-      });
-    }
+    const theme = await getEffectiveTheme(row.owner_org_id).catch(() => null);
+    const gate = await evaluateGate(row, { orgId: row.owner_org_id, theme });
+    const blocker = submissionBlocker(gate, state);
+    if (blocker) return { blocker };
+
     const now = new Date().toISOString();
     const belowFloorTagged = Boolean(gate.below_floor?.satisfied);
     const sourcingTags = Array.isArray(gate.sourcing_channel?.tags) ? gate.sourcing_channel.tags : [];
-    const patched = {
-      ...opp.data,
-      status: 'submission', status_entered_at: now, submitted_at: now, submitted_by: req.actor.email,
+    const patch = {
+      submitted_at: now,
+      submitted_by: actor.email,
       ...(sourcingTags.length
         ? {
             sourcing_tags: sourcingTags,
-            related_party_auto_flag: gate.sourcing_channel.related_party_auto_flag ? true : undefined,
-            compressed_timeline: gate.sourcing_channel.compressed_timeline ? true : undefined,
+            ...(gate.sourcing_channel.related_party_auto_flag ? { related_party_auto_flag: true } : {}),
+            ...(gate.sourcing_channel.compressed_timeline ? { compressed_timeline: true } : {}),
           }
         : {}),
       ...(belowFloorTagged
-        ? {
-            below_floor_exception: true,
-            below_floor_tag: gate.below_floor.tag,
-            below_floor_escalated: true,
-            below_floor_escalated_at: now,
-          }
+        ? { below_floor_exception: true, below_floor_tag: gate.below_floor.tag, below_floor_escalated: true, below_floor_escalated_at: now }
         : {}),
     };
-    await pool.query(
-      'UPDATE entity_record SET data = $3, updated_date = now(), updated_by = $4 WHERE entity = $1 AND id = $2',
-      [OPPORTUNITY_ENTITY, opp.id, JSON.stringify(patched), req.actor.email]
-    );
-    await pool.query(
-      'INSERT INTO pipeline_transition (id, opportunity_id, owner_org_id, from_state, to_state, actor_email, comment) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [uuid(), opp.id, opp.owner_org_id, state, 'submission', req.actor.email,
-       belowFloorTagged ? 'Below-floor exception route' : null]
-    );
-    // Escalate a below-floor exception to Sirius so it cannot close at
-    // subsidiary level (INT-03). Delivery is best-effort; the notification is
-    // recorded regardless.
-    if (belowFloorTagged) {
-      await notify({
-        to: 'deal.lead@sirius.local',
-        kind: 'below_floor_escalation',
-        subject: 'Below-floor exception: ' + (patched.opportunity_name || opp.id),
-        body: BELOW_FLOOR_ESCALATION.note + ' Synergy: ' + (patched.below_floor_synergy_case || '(not supplied)'),
-        entity: OPPORTUNITY_ENTITY, entityId: opp.id, orgId: opp.owner_org_id, actor: req.actor,
-        deliver: false,
-      }).catch((err) => console.warn('[gate] below-floor escalation notify failed:', err.message));
-    }
+    for (const hook of submitHooks.inTransaction) Object.assign(patch, await hook({ client, row, actor, gate }) || {});
+    const merged = await recordSteps(client, row, submitSteps(state, actor, {
+      comment: comment || (belowFloorTagged ? 'Below-floor exception route' : null),
+    }), { patch, actor });
     await writeAudit({
-      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit',
-      actor: req.actor, orgId: opp.owner_org_id,
+      client,
+      entity: OPPORTUNITY_ENTITY, entityId: row.id, action: 'submit',
+      actor, orgId: row.owner_org_id,
       before: { status: state },
-      after: { status: 'submission', ...(belowFloorTagged ? { below_floor_tag: gate.below_floor.tag, escalated: true } : {}) },
+      after: { status: merged.status, ...(belowFloorTagged ? { below_floor_tag: gate.below_floor.tag, escalated: true } : {}),
+        ...(merged.sirius_owner_email ? { sirius_owner_email: merged.sirius_owner_email } : {}) },
     });
-    res.json({ ok: true, state: 'submission', below_floor: gate.below_floor || null, opportunity: { ...patched, id: opp.id } });
+    return { row: { ...row, data: merged }, gate, belowFloorTagged };
+  });
+
+  if (outcome.blocker) {
+    await writeAudit({
+      entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'submit_blocked',
+      actor, orgId: opp.owner_org_id, ...outcome.blocker.audit,
+    });
+    return { ok: false, status: outcome.blocker.status, body: outcome.blocker.body };
+  }
+  const { row, gate, belowFloorTagged } = outcome;
+  // Escalate a below-floor exception to Sirius so it cannot close at subsidiary
+  // level (INT-03). Delivery is best-effort; the notification is recorded.
+  if (belowFloorTagged) {
+    await notify({
+      to: row.data.sirius_owner_email || 'deal.lead@sirius.local',
+      kind: 'below_floor_escalation',
+      subject: 'Below-floor exception: ' + (row.data.opportunity_name || row.id),
+      body: BELOW_FLOOR_ESCALATION.note + ' Synergy: ' + (row.data.below_floor_synergy_case || '(not supplied)'),
+      entity: OPPORTUNITY_ENTITY, entityId: row.id, orgId: row.owner_org_id, actor,
+      deliver: false,
+    }).catch((err) => console.warn('[gate] below-floor escalation notify failed:', err.message));
+  }
+  for (const hook of submitHooks.afterCommit) {
+    await Promise.resolve().then(() => hook({ row, actor, gate })).catch((err) => console.warn('[gate] submit hook failed:', err.message));
+  }
+  return {
+    ok: true,
+    state: row.data.status,
+    below_floor: gate.below_floor || null,
+    opportunity: { ...row.data, id: row.id },
+  };
+}
+
+gateRouter.post('/opportunities/:id/submit', async (req, res) => {
+  try {
+    const result = await submitForScreening(req.params.id, req.actor);
+    if (!result.ok) return res.status(result.status).json(result.body);
+    res.json(result);
   } catch (err) { sendErr(res, err); }
 });
 

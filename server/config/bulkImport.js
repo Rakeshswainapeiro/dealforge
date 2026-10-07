@@ -52,7 +52,15 @@ export const IMPORT_COLUMN_KEYS = IMPORT_COLUMNS.map((c) => c.key);
 // Columns the reader understands; anything else is ignored (and reported).
 export const IMPORT_KNOWN_HEADERS = new Set(IMPORT_COLUMNS.map((c) => normaliseHeader(c.header)));
 
-export const IMPORT_STATES = ['draft', 'submission', 'screening'];
+// A deal already in flight is loaded as a draft or straight into Screening
+// Review (BRD v2 WF-01). The legacy names 'submission' and 'screening' from the
+// old tracker are read as Screening Review.
+export const IMPORT_STATES = ['draft', 'screening_review'];
+const LEGACY_IMPORT_STATES = { submission: 'screening_review', screening: 'screening_review' };
+export function importState(value) {
+  const key = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+  return LEGACY_IMPORT_STATES[key] || key;
+}
 export const IMPORT_ROW_STATUSES = ['valid', 'warning', 'error'];
 
 export const BULK_IMPORT_MESSAGES = {
@@ -168,7 +176,7 @@ export function validateImportRow(row, { orgIds = [], fieldKeys = INTAKE_FIELD_K
   if (!isBlank(row.in_approved_budget) && !['yes', 'no'].includes(String(row.in_approved_budget).toLowerCase())) {
     warnings.push('In approved budget should be yes or no.');
   }
-  if (!isBlank(row.state) && !IMPORT_STATES.includes(row.state)) {
+  if (!isBlank(row.state) && !IMPORT_STATES.includes(importState(row.state))) {
     warnings.push('State "' + row.state + '" is not importable; the row will be loaded as draft.');
   }
   if (!isBlank(row.owner_email) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(row.owner_email)) {
@@ -256,7 +264,7 @@ export function importTemplateCsv() {
 
 export default {
   BULK_IMPORT_VERSION, BULK_IMPORT_CONFIG_KEY, IMPORT_POLICY, IMPORT_COLUMNS,
-  IMPORT_COLUMN_KEYS, IMPORT_STATES, IMPORT_ROW_STATUSES, BULK_IMPORT_MESSAGES,
+  IMPORT_COLUMN_KEYS, IMPORT_STATES, IMPORT_ROW_STATUSES, BULK_IMPORT_MESSAGES, importState,
   normaliseHeader, columnKeyForHeader, splitCsv, rowsFromMatrix, parseCsv,
   validateImportRow, buildValidationReport, importTemplateCsv,
 };

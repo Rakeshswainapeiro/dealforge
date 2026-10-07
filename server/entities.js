@@ -5,6 +5,15 @@ import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
 import { canViewOrg, canWriteOrg, isCrossOrgReader } from './rbac.js';
 import { evaluateAbac, ABAC_RESOURCES } from './abac.js';
+import { OPPORTUNITY_ENTITY, checkCreate, checkUpdate, checkDelete } from './config/opportunityPolicy.js';
+import { withLockedOpportunity } from './lifecycle.js';
+
+function policyError(result) {
+  const err = new Error(result.error);
+  err.status = result.status;
+  if (result.fields || result.state) err.data = { ...(result.fields ? { fields: result.fields } : {}), ...(result.state ? { state: result.state } : {}) };
+  return err;
+}
 
 // ---------------------------------------------------------------------------
 // Entities API (E1.1 / REQ-ARCH-01..02).
@@ -112,7 +121,15 @@ export async function getRecord(entity, id, { actor } = {}) {
 
 export async function createRecord(entity, data, { actor } = {}) {
   const id = data.id || uuid();
-  const ownerOrg = data.owner_org_id !== undefined ? data.owner_org_id : actor?.org_id || null;
+  let ownerOrg = data.owner_org_id !== undefined ? data.owner_org_id : actor?.org_id || null;
+  // Opportunities always start as a draft owned by the preparing subsidiary;
+  // workflow and reviewer fields cannot be set by the create payload (WF-01).
+  if (entity === OPPORTUNITY_ENTITY) {
+    const checked = checkCreate(data, { actor });
+    if (!checked.ok) throw policyError(checked);
+    data = { ...checked.data, ...(data.id ? { id: data.id } : {}) };
+    ownerOrg = checked.owner_org_id;
+  }
   if (!canWriteOrg(actor?.membership, ownerOrg, {
     descendantIds: actor?.descendant_ids || [],
     grantedOrgIds: actor?.granted_org_ids || [],
@@ -150,7 +167,44 @@ export async function bulkCreateRecords(entity, items = [], { actor } = {}) {
   return out;
 }
 
+// An opportunity edit runs under the same row lock as the workflow engine, so a
+// save can never interleave with a submit or a decision, and goes through the
+// write policy: system fields, the owning org and locked states are protected,
+// and a material change after attestation clears the CEO/CFO attestations.
+async function updateOpportunity(id, patch, { actor } = {}) {
+  return withLockedOpportunity(id, async (client, row) => {
+    if (!canViewOrg(actor?.membership, row.owner_org_id, {
+      descendantIds: actor?.descendant_ids || [],
+      grantedOrgIds: actor?.granted_org_ids || [],
+    })) {
+      const err = new Error('Not permitted to modify this record'); err.status = 403; throw err;
+    }
+    const checked = checkUpdate(row.data || {}, patch || {}, { actor, ownerOrgId: row.owner_org_id });
+    if (!checked.ok) throw policyError(checked);
+    if (!checked.changed.length) return rowToRecord(row);
+    const before = rowToRecord(row);
+    const { rows } = await client.query(
+      `UPDATE entity_record SET data = (CASE WHEN $4 THEN data - 'attestations' ELSE data END) || $3::jsonb,
+         updated_date = now(), updated_by = $5
+       WHERE entity = $1 AND id = $2 RETURNING *`,
+      [OPPORTUNITY_ENTITY, id, JSON.stringify(checked.patch), checked.clearAttestations, actor?.email || null]
+    );
+    const after = rowToRecord(rows[0]);
+    await writeAudit({ client, entity: OPPORTUNITY_ENTITY, entityId: id, action: 'update', actor, orgId: row.owner_org_id, before, after });
+    if (checked.clearAttestations) {
+      await writeAudit({
+        client, entity: OPPORTUNITY_ENTITY, entityId: id, action: 'attestations_invalidated', actor, orgId: row.owner_org_id,
+        before: { attestations: Object.keys(row.data?.attestations || {}) },
+        after: { changed: checked.changed },
+        comment: 'Figures changed after the CEO/CFO attestation; both must attest again (INT-09)',
+      });
+    }
+    return after;
+  });
+}
+
 export async function updateRecord(entity, id, patch, { actor } = {}) {
+  if (entity === OPPORTUNITY_ENTITY) return updateOpportunity(id, patch, { actor });
   const { rows: existing } = await pool.query(
     'SELECT * FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false',
     [entity, id]
@@ -175,6 +229,16 @@ export async function updateRecord(entity, id, patch, { actor } = {}) {
   delete patched.created_date;
   delete patched.updated_date;
   const ownerOrg = patch.owner_org_id !== undefined ? patch.owner_org_id : row.owner_org_id;
+  // Moving a record to another organisation needs write access to the target
+  // too, or a user could push their data into a sibling's scope.
+  if (ownerOrg !== row.owner_org_id && !canWriteOrg(actor?.membership, ownerOrg, {
+    descendantIds: actor?.descendant_ids || [],
+    grantedOrgIds: actor?.granted_org_ids || [],
+  })) {
+    const err = new Error('Not permitted to move this record to that organisation');
+    err.status = 403;
+    throw err;
+  }
   const { rows } = await pool.query(
     `UPDATE entity_record SET data = $3, owner_org_id = $4, updated_date = now(), updated_by = $5
       WHERE entity = $1 AND id = $2 RETURNING *`,
@@ -199,6 +263,11 @@ export async function deleteRecord(entity, id, { actor } = {}) {
     const err = new Error('Not permitted to delete this record');
     err.status = 403;
     throw err;
+  }
+  // A submitted opportunity is history: only a draft can be deleted (INT-13).
+  if (entity === OPPORTUNITY_ENTITY) {
+    const checked = checkDelete(row.data || {}, { actor, ownerOrgId: row.owner_org_id });
+    if (!checked.ok) throw policyError(checked);
   }
   await pool.query('UPDATE entity_record SET deleted = true, updated_date = now() WHERE entity = $1 AND id = $2', [entity, id]);
   await writeAudit({ entity, entityId: id, action: 'delete', actor, orgId: row.owner_org_id, before: rowToRecord(row) });
@@ -263,7 +332,7 @@ async function enforceAbac(req, resource, context) {
 }
 
 function sendErr(res, err) {
-  res.status(err.status || 500).json({ error: err.message });
+  res.status(err.status || 500).json({ error: err.message, ...(err.data || {}) });
 }
 
 entitiesRouter.get('/:entity', guardEntity, async (req, res) => {

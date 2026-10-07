@@ -238,7 +238,7 @@ export const MVP_FIXTURES = [
     persona: 'preparer',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'submission',
+    state: 'screening_review',
     documents: [...REQUIRED_DOCS, 'adverse_media_evidence'],
     fields: {
       opportunity_name: 'Vision Care Imaging Platform',
@@ -293,7 +293,7 @@ export const MVP_FIXTURES = [
     persona: 'preparer',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'submission',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // A cross-border deal (W2-09 / FIN-08): the target is in India while the
     // owning Infinia subsidiary is registered in the UAE, so the four
@@ -342,7 +342,7 @@ export const MVP_FIXTURES = [
     persona: 'preparer',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'submission',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // A deal reported in USD (W2-10 / NFR-08): the Sirius base is AED, so the
     // preparer records the FX rate used (AED per USD). Every figure in the
@@ -383,7 +383,7 @@ export const MVP_FIXTURES = [
     persona: 'preparer',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'submission',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // A live submission kept aside so the withdraw flow can be demonstrated
     // and captured without disturbing the happy-path fixture (INT-13).
@@ -609,7 +609,7 @@ export const MVP_FIXTURES = [
     persona: 'reviewer',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     relatedParty: true,
     fields: {
@@ -646,7 +646,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     fields: { opportunity_name: 'Cloud Platforms Consolidation', target_name: 'Emircom Cloud Services' },
     note: 'In screening: gate-1 filters and the scorecard inputs are present.',
@@ -656,7 +656,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: FINSTREET_ORG_ID,
     ownerEmail: 'deal.lead@finstreet.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // The same target as seed-in-screening, but raised by a sibling subsidiary.
     // The Investment Team sees a duplicate warning and can link or dismiss it;
@@ -675,7 +675,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: FINSTREET_ORG_ID,
     ownerEmail: 'deal.lead@finstreet.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     fields: {
       opportunity_name: 'Industrial Logistics Adjacency',
@@ -696,7 +696,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     fields: {
       opportunity_name: 'Telecom Fibre Roll-up',
@@ -716,7 +716,7 @@ export const MVP_FIXTURES = [
     persona: 'leadership',
     org: FINSTREET_ORG_ID,
     ownerEmail: 'deal.lead@finstreet.local',
-    state: 'refinement',
+    state: 'proceed_to_gate2',
     documents: REQUIRED_DOCS,
     route: true,
     fields: {
@@ -728,14 +728,65 @@ export const MVP_FIXTURES = [
       ask_aed: 90,
       build_buy_partner: 'buy',
     },
-    note: 'Awaiting leadership and the IC: the org workflow route is applied and signed.',
+    note: 'Proceeded to Gate 2 at the Gate-1 screening decision; the Phase 2 sign-off route is applied for reference.',
+  },
+  {
+    key: 'seed-info-requested',
+    persona: 'preparer',
+    org: INFINIA_ORG_ID,
+    ownerEmail: 'deal.lead@infinia.local',
+    state: 'information_requested',
+    documents: REQUIRED_DOCS,
+    fields: {
+      opportunity_name: 'Regional Logistics Software',
+      target_name: 'RouteGrid Technologies LLC',
+      sector: 'Technology',
+      geography: 'UAE',
+      total_commitment_aed: 110,
+      ask_aed: 55,
+    },
+    note: 'Sirius has requested information; the subsidiary owes a response (WF-01 / WF-04).',
+  },
+  {
+    key: 'seed-on-hold',
+    persona: 'reviewer',
+    org: FINSTREET_ORG_ID,
+    ownerEmail: 'deal.lead@finstreet.local',
+    state: 'on_hold',
+    documents: REQUIRED_DOCS,
+    fields: {
+      opportunity_name: 'Cross-border Remittance Rails',
+      target_name: 'Corridor Pay FZ-LLC',
+      sector: 'Financial Services',
+      geography: 'UAE',
+      total_commitment_aed: 140,
+      ask_aed: 70,
+    },
+    note: 'Screening decision deferred: on hold awaiting the counterparty process (WF-01).',
+  },
+  {
+    key: 'seed-declined',
+    persona: 'reviewer',
+    org: INFINIA_ORG_ID,
+    ownerEmail: 'deal.lead@infinia.local',
+    state: 'declined',
+    documents: REQUIRED_DOCS,
+    fields: {
+      opportunity_name: 'Legacy Print Services Carve-out',
+      target_name: 'Desert Print Holdings LLC',
+      sector: 'Business Services',
+      geography: 'UAE',
+      total_commitment_aed: 95,
+      ask_aed: 45,
+    },
+    note: 'Declined at Gate 1 with a recorded reason: returns below the hurdle (WF-05).',
   },
   {
     key: 'seed-disqualifier',
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // Two automatic disqualifiers are present on the record (W3-04 / SCR-05):
     // a sanctions / PEP exposure without mitigation and an undisclosed related
@@ -762,7 +813,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // The Gate 2 weighted scorecard (W3-05 / SCO-02): seven 1-5 criteria with
     // weights summing to 100%. This fixture is scored across the criteria so
@@ -794,7 +845,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // A below-bar Gate 2 scorecard (W3-05 / SCO-02): the weighted total sits
     // under the 3.5 pass bar, so the board requires an explicit CIO override
@@ -823,7 +874,7 @@ export const MVP_FIXTURES = [
     persona: 'analyst',
     org: INFINIA_ORG_ID,
     ownerEmail: 'deal.lead@infinia.local',
-    state: 'screening',
+    state: 'screening_review',
     documents: REQUIRED_DOCS,
     // A two-lens floor case (W3-06 / SCO-04): the strategic lens is strong
     // (5.0) so the weighted total clears the 3.5 pass bar, but the financial

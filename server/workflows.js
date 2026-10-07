@@ -6,7 +6,6 @@ import { resolveActor } from './users.js';
 import { canViewOrg, canWriteOrg, canConfigure, canActAtStage, canSign } from './rbac.js';
 import { canReturnAtStage } from './rbac.js';
 import { notify } from './notify.js';
-import { transition } from './pipeline.js';
 import { loadDecisionReasonConfig } from './decisionReasons.js';
 import { recordDecisionReason } from './config/decisionReasons.js';
 
@@ -31,16 +30,12 @@ const uuid = () => crypto.randomUUID();
 export const WORKFLOW_ACTIONS = ['fill', 'review', 'sign', 'approve'];
 export const WORKFLOW_STATUSES = ['draft', 'active', 'archived'];
 
-// Stages that map onto a pipeline state. When such a stage completes the
-// submission advances (best-effort; the pipeline guards its own legality).
-export const STAGE_STATE_HINT = {
-  prepare: 'submission',
-  subsidiary_sign: 'submission',
-  investment_review: 'screening',
-  refinement: 'refinement',
-  leadership_approve: 'approval',
-};
-
+// The sign-off route (Fill -> Review -> Sign -> Approve, through leadership and
+// the IC) is the Phase 2 four-gate approval workflow (BRD v2 WF-09). In Phase 1
+// it is recorded alongside the opportunity but never moves the Gate-1
+// lifecycle: only the screening workflow (config/workflowStates.js) does, so a
+// route action cannot skip the screening decision or the Delegation of
+// Authority.
 // The default route mirrors the pilot approval path (REQ-APPR-01): the
 // producing layer prepares, the subsidiary signs off, the Sirius investment
 // team refines, leadership approves, then the IC approves.
@@ -490,32 +485,7 @@ export async function actOnStage(opportunityId, { stageKey, action = 'act', comm
     comment: comment || null,
   });
 
-  // Return-for-revision also moves the submission back to the producing layer
-  // (E7.5 / REQ-FLOW-01). The pipeline guards the transition; a rejection here
-  // never loses the route event.
-  if (returning) {
-    try {
-      await transition(opp.id, 'returned', {
-        actor,
-        comment: comment || 'Returned for revision',
-        reasonCode: reasonCode || reasonFields.decision_reason,
-        reasonText: reasonFields.decision_reason_text,
-      });
-    }
-    catch (err) { console.warn('[workflow] pipeline return declined:', err.message); }
-  }
-
   const nextStageKey = returning ? null : (stageList[idx + 1]?.stage_key || null);
-  // Completing a stage that maps to a pipeline state advances the submission
-  // (E9 approval path). Best-effort: the pipeline enforces its own legality,
-  // so an out-of-order stage never fails the route for the actor.
-  if (!returning) {
-    const hint = STAGE_STATE_HINT[currentKey];
-    if (hint) {
-      try { await transition(opp.id, hint, { actor, comment }); }
-      catch (err) { console.warn('[workflow] pipeline advance declined:', err.message); }
-    }
-  }
   const allParticipants = await getRouteParticipants(route.id);
   const recipients = allParticipants
     .filter((p) => p.stage_key === (nextStageKey || currentKey))

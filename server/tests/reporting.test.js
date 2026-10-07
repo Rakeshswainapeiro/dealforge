@@ -18,8 +18,8 @@ import {
 const card = (over = {}) => ({
   id: 'opp-12345678-abcd',
   owner_org_id: 'org-infinia-technologies-limited',
-  state: 'screening',
-  state_label: 'Screening',
+  state: 'screening_review',
+  state_label: 'Screening Review',
   opportunity_name: 'Vision Care Imaging Platform',
   opportunity_type: 'Acquisition',
   sector: 'Healthcare',
@@ -39,7 +39,8 @@ describe('reporting config (W7-01)', () => {
     assert.equal(cfg.revision, 1);
     assert.deepEqual(cfg.columns, WEEKLY_COLUMN_KEYS);
     assert.equal(cfg.schedule.weekday, 5);
-    assert.equal(cfg.states.includes('submission'), true);
+    assert.equal(cfg.states.includes('screening_review'), true);
+    assert.equal(cfg.states.includes('submission'), false, 'legacy state names are gone');
   });
 
   test('resolve clamps unknown columns and bad schedule values', () => {
@@ -78,25 +79,25 @@ describe('weekly rows (W7-01) - build from pipeline cards', () => {
       subsidiaryNames: { 'org-infinia-technologies-limited': 'Infinia Technologies Limited' },
     });
     assert.equal(rows[0].values.subsidiary, 'Infinia Technologies Limited');
-    assert.equal(rows[0].values.state_label, 'Screening');
+    assert.equal(rows[0].values.state_label, 'Screening Review');
     assert.equal(rows[0].values.sla_breached, 'Yes');
     assert.equal(rows[0].values.ref, 'OPP-1234');
   });
 
   test('a declined card surfaces its decision reason', () => {
     assert.equal(columnValue('decision', card({ state: 'declined', declined_reason: 'Outside mandate' })), 'Outside mandate');
-    assert.equal(columnValue('decision', card({ state: 'screening' })), '');
+    assert.equal(columnValue('decision', card({ state: 'screening_review' })), '');
   });
 
   test('the summary counts stages, breaches and commitment', () => {
     const { rows } = buildWeeklyRows(
-      [card(), card({ id: 'opp-2', state: 'approval', state_label: 'Approval', sla_breached: false, total_commitment_aed: 75 })],
+      [card(), card({ id: 'opp-2', state: 'proceed_to_gate2', state_label: 'Proceed to Gate 2', sla_breached: false, total_commitment_aed: 75 })],
       { config: defaultReportingConfig() }
     );
     const s = summarizeWeekly(rows);
     assert.equal(s.total, 2);
     assert.equal(s.breaches, 1);
-    assert.equal(s.by_state.Screening, 1);
+    assert.equal(s.by_state['Screening Review'], 1);
     assert.equal(s.commitment_aed_mn, 200);
   });
 

@@ -3,6 +3,7 @@ import { test, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { qualifyingGateDefaults } from '../config/qualifyingGates.js';
 import { attestationDefaults } from '../config/attestations.js';
+import { withAttestationSigning } from './support/attestationSigning.js';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:34000').replace(/[/]+$/, '');
 const SIRIUS = 'org-sirius-international-holding-limited';
@@ -10,7 +11,7 @@ const FINSTREET = 'org-finstreet-limited';
 
 let online = false;
 
-async function api(path, { method = 'GET', body, user, form } = {}) {
+async function rawApi(path, { method = 'GET', body, user, form } = {}) {
   const headers = {};
   if (user) headers['x-user-id'] = user;
   if (!form) headers['Content-Type'] = 'application/json';
@@ -22,6 +23,7 @@ async function api(path, { method = 'GET', body, user, form } = {}) {
   try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, data };
 }
+const api = withAttestationSigning(rawApi);
 
 const FULL_FIELDS = {
   ...qualifyingGateDefaults(),
@@ -164,23 +166,19 @@ describe('approval path stages (E9.1/E9.2/E9.3)', () => {
     assert.equal(ic.comment, 'Cleared by IC.');
   });
 
-  test('the pipeline advances as stages complete', async (t) => {
+  test('the approval route (Phase 2) never moves the Gate-1 lifecycle (WF-01)', async (t) => {
     if (!online) return t.skip('server offline');
     const opp = await makeOpportunity();
     await api('/api/workflows/apply/' + opp.id, { method: 'POST', user: 'user-deal-lead' });
-    await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-deal-lead', body: {} });
-    const afterPrepare = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-    assert.equal(afterPrepare.data.status, 'submission');
-    await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-cfo', body: { action: 'sign' } });
-    await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-sirius-deal-lead', body: {} });
-    const afterReview = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-    assert.equal(afterReview.data.status, 'screening');
-    await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-sirius-deal-lead', body: {} });
-    const afterRefine = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-    assert.equal(afterRefine.data.status, 'refinement');
-    await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-fahad', body: { comment: 'Approved.' } });
-    const afterLeadership = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-    assert.equal(afterLeadership.data.status, 'approval');
+    const steps = [
+      ['user-deal-lead', {}], ['user-cfo', { action: 'sign' }], ['user-sirius-deal-lead', {}],
+      ['user-sirius-deal-lead', {}], ['user-fahad', { comment: 'Approved.' }],
+    ];
+    for (const [user, body] of steps) {
+      await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user, body });
+      const after = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
+      assert.equal(after.data.status, 'draft', 'only the screening workflow changes the state');
+    }
   });
 });
 

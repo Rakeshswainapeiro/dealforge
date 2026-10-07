@@ -7,6 +7,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { qualifyingGateDefaults } from '../config/qualifyingGates.js';
 import { attestationDefaults } from '../config/attestations.js';
+import { withAttestationSigning } from './support/attestationSigning.js';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:34000').replace(/[/]+$/, '');
 const INFINIA = 'org-infinia-technologies-limited';
@@ -20,7 +21,7 @@ function record(id, title, status, evidence = '') {
   SCRIPT.push({ id, title, status, evidence });
 }
 
-async function api(path, { method = 'GET', body, user, form } = {}) {
+async function rawApi(path, { method = 'GET', body, user, form } = {}) {
   const headers = {};
   if (user) headers['x-user-id'] = user;
   if (!form) headers['Content-Type'] = 'application/json';
@@ -32,6 +33,7 @@ async function api(path, { method = 'GET', body, user, form } = {}) {
   try { data = JSON.parse(raw); } catch { data = raw; }
   return { status: res.status, data, headers: res.headers };
 }
+const api = withAttestationSigning(rawApi);
 
 function uploadForm(requirementKey, name = 'uat-doc.txt') {
   const form = new FormData();
@@ -142,19 +144,18 @@ describe('UAT golden path (J1-J5)', () => {
       const gate = await api('/api/gate/opportunities/' + opp.id + '/status', { user: 'user-deal-lead' });
       assert.equal(gate.status, 200);
       assert.equal(gate.data.gate.complete, true, 'the document gate must be satisfied');
-      const applied = await api('/api/workflows/apply/' + opp.id, { method: 'POST', user: 'user-deal-lead' });
-      assert.equal(applied.status, 200);
-      const prepare = await act(opp.id, 'user-deal-lead', {});
-      assert.equal(prepare.status, 200, JSON.stringify(prepare.data));
-      const sign = await act(opp.id, 'user-cfo', { action: 'sign' });
-      assert.equal(sign.status, 200, JSON.stringify(sign.data));
+      const submit = await api('/api/gate/opportunities/' + opp.id + '/submit', { method: 'POST', user: 'user-deal-lead' });
+      assert.equal(submit.status, 200, JSON.stringify(submit.data));
       const afterSubmit = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-      assert.equal(afterSubmit.data.status, 'submission', 'submission must land in Submission');
-      const bundle = await api('/api/workflows/route/' + opp.id, { user: 'user-deal-lead' });
-      const signStage = bundle.data.stages.find((s) => s.requires_signature);
-      assert.equal(signStage.status, 'complete');
-      assert.ok(bundle.data.participants.some((p) => p.signed_at), 'signature must be captured with a time');
-      return 'state=submission - CFO signature captured - gate complete';
+      assert.equal(afterSubmit.data.status, 'screening_review', 'submission must land in Screening review');
+      const history = await api('/api/pipeline/opportunities/' + opp.id + '/transitions', { user: 'user-deal-lead' });
+      const steps = history.data.map((h) => h.to_state);
+      for (const s of ['submitted', 'completeness_check', 'initial_screening', 'screening_review']) {
+        assert.ok(steps.includes(s), 'missing automatic step ' + s);
+      }
+      const edit = await api('/api/entities/DealOpportunity/' + opp.id, { method: 'PUT', user: 'user-deal-lead', body: { ask_aed: 1 } });
+      assert.equal(edit.status, 409, 'the record is locked once submitted');
+      return 'state=screening_review - automatic steps recorded - locked';
     }));
 
   test('[J2] a raw idea without the mandatory documents is blocked', journey(
@@ -203,65 +204,61 @@ describe('UAT golden path (J1-J5)', () => {
       return 'flagged - reasoned exception recorded and audited';
     }));
 
-  test('[J4] Sirius screens and clarifies in-thread', journey(
-    'J4', 'Screening clarification in-thread', async () => {
+  test('[J4] Sirius requests information and the subsidiary responds', journey(
+    'J4', 'Information request round trip', async () => {
       assert.ok(ctx.oppId, 'J1 must run first');
-      const toScreen = await api('/api/pipeline/opportunities/' + ctx.oppId + '/transition', {
-        method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-      });
-      assert.equal(toScreen.status, 200, JSON.stringify(toScreen.data));
-      assert.equal(toScreen.data.state, 'screening');
-      const thread = await api('/api/qa/opportunities/' + ctx.oppId + '/threads', {
+      const ask = await api('/api/pipeline/opportunities/' + ctx.oppId + '/transition', {
         method: 'POST', user: 'user-sirius-deal-lead',
-        body: {
-          subject: 'Clarify the synergy case',
-          body: 'Please share the detailed synergy plan and refreshed financials.',
-          requires_response: true,
-          participants: ['deal.lead@infinia.local'],
-        },
+        body: { state: 'information_requested', question: { subject: 'Clarify the synergy case', body: 'Please share the detailed synergy plan.' } },
       });
-      assert.equal(thread.status, 200, JSON.stringify(thread.data));
-      ctx.threadId = thread.data.id;
-      const state = await api('/api/entities/DealOpportunity/' + ctx.oppId, { user: 'user-deal-lead' });
-      assert.equal(state.data.status, 'screening', 'the item stays in Screening until the thread resolves');
+      assert.equal(ask.status, 200, JSON.stringify(ask.data));
+      assert.equal(ask.data.state, 'information_requested');
+      ctx.threadId = ask.data.thread_id;
+      const thread = await api('/api/qa/threads/' + ctx.threadId, { user: 'user-deal-lead' });
+      assert.equal(thread.status, 200, 'the subsidiary sees the question');
+      assert.equal(thread.data.kind || thread.data.thread?.kind, 'information_request');
       const notes = await api('/api/notifications?all=1&channels=all&limit=300', { user: 'user-admin' });
       const notified = notes.data.items.find((n) => n.entity_id === ctx.oppId && n.recipient_email === 'deal.lead@infinia.local');
-      assert.ok(notified, 'the subsidiary must be notified of the clarification');
-      return 'thread open - subsidiary notified - state=screening';
+      assert.ok(notified, 'the subsidiary must be notified of the request');
+      const answer = await api('/api/qa/threads/' + ctx.threadId + '/messages', {
+        method: 'POST', user: 'user-deal-lead', body: { body: 'Synergy plan: shared grid connection saves AED 4m a year.', is_response: true },
+      });
+      assert.ok([200, 201].includes(answer.status), JSON.stringify(answer.data));
+      const respond = await api('/api/pipeline/opportunities/' + ctx.oppId + '/transition', {
+        method: 'POST', user: 'user-deal-lead', body: { state: 'screening_review', comment: 'Synergy plan answered in the thread.' },
+      });
+      assert.equal(respond.status, 200, JSON.stringify(respond.data));
+      assert.equal(respond.data.state, 'screening_review');
+      return 'question tracked in-thread - subsidiary notified - answered - back in review';
     }));
 
-  test('[J5] refinement to leadership to IC, with a return leg', journey(
-    'J5', 'Refinement > leadership > IC (+return)', async () => {
+  test('[J5] Gate-1 decision with a mandatory reason, plus a hold-and-resume leg', journey(
+    'J5', 'Gate-1 decision (+hold/resume)', async () => {
       assert.ok(ctx.oppId, 'J1 must run first');
-      await act(ctx.oppId, 'user-sirius-deal-lead', {});
-      await act(ctx.oppId, 'user-sirius-deal-lead', {});
-      const leadership = await act(ctx.oppId, 'user-fahad', { comment: 'Leadership approves; proceed to IC.' });
-      assert.equal(leadership.status, 200, JSON.stringify(leadership.data));
-      const afterLeadership = await api('/api/entities/DealOpportunity/' + ctx.oppId, { user: 'user-deal-lead' });
-      assert.equal(afterLeadership.data.status, 'approval');
-      const noRationale = await act(ctx.oppId, 'user-ic', {});
-      assert.equal(noRationale.status, 422, 'the IC stage must demand a rationale');
-      assert.ok(noRationale.data.missing.includes('rationale'));
-      const ic = await act(ctx.oppId, 'user-ic', { reason_code: 'returns_above_hurdle', comment: 'IC approves with conditions.' });
-      assert.equal(ic.status, 200, JSON.stringify(ic.data));
-      assert.equal(ic.data.route_status, 'complete');
-      const events = await api('/api/workflows/route/' + ctx.oppId + '/events', { user: 'user-deal-lead' });
-      const stages = new Set(events.data.map((e) => e.stage_key));
-      for (const s of ['investment_review', 'refinement', 'leadership_approve', 'ic_approve']) {
-        assert.ok(stages.has(s), 'missing workflow event for ' + s);
-      }
-      assert.ok(events.data.every((e) => e.actor_email && e.created_at), 'every event carries an actor and a time');
-      // Return-for-revision leg on a fresh opportunity. Extension of the journey.
-      const back = await createOpportunity();
-      await attachDocuments(back.id);
-      await api('/api/workflows/apply/' + back.id, { method: 'POST', user: 'user-deal-lead' });
-      await act(back.id, 'user-deal-lead', {});
-      await act(back.id, 'user-cfo', { action: 'sign' });
-      const ret = await act(back.id, 'user-sirius-deal-lead', { action: 'return', reason_code: 'unclear_synergy_case', comment: 'Clarify the funding plan.' });
-      assert.equal(ret.status, 200, JSON.stringify(ret.data));
-      const backState = await api('/api/entities/DealOpportunity/' + back.id, { user: 'user-deal-lead' });
-      assert.equal(backState.data.status, 'returned', 'a return drops the item to the producing layer');
-      return 'leadership+IC decisions logged - rationale enforced - return leg OK';
+      const move = (id, user, body) => api('/api/pipeline/opportunities/' + id + '/transition', { method: 'POST', user, body });
+      const notMine = await move(ctx.oppId, 'user-deal-lead', { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'x' });
+      assert.equal(notMine.status, 403, 'the subsidiary never decides');
+      const noReason = await move(ctx.oppId, 'user-vertical-head', { state: 'proceed_to_gate2' });
+      assert.equal(noReason.status, 400, 'a decision needs a reason');
+      const proceed = await move(ctx.oppId, 'user-vertical-head', { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Clears Gate 1; move to diligence.' });
+      assert.equal(proceed.status, 200, JSON.stringify(proceed.data));
+      const after = await api('/api/entities/DealOpportunity/' + ctx.oppId, { user: 'user-deal-lead' });
+      assert.equal(after.data.status, 'proceed_to_gate2');
+      assert.equal(after.data.decision_reason, 'clears_gate1');
+      const history = await api('/api/pipeline/opportunities/' + ctx.oppId + '/transitions', { user: 'user-deal-lead' });
+      assert.ok(history.data.every((h) => h.actor_email && h.created_at), 'every step carries an actor and a time');
+
+      const other = await createOpportunity();
+      await attachDocuments(other.id);
+      const sub = await api('/api/gate/opportunities/' + other.id + '/submit', { method: 'POST', user: 'user-deal-lead' });
+      assert.equal(sub.status, 200, JSON.stringify(sub.data));
+      const hold = await move(other.id, 'user-vertical-head', { state: 'on_hold', reason_code: 'counterparty_timing', comment: 'Seller paused.' });
+      assert.equal(hold.status, 200, JSON.stringify(hold.data));
+      const resume = await move(other.id, 'user-vertical-head', { state: 'screening_review', comment: 'Seller re-engaged.' });
+      assert.equal(resume.status, 200, JSON.stringify(resume.data));
+      const decline = await move(other.id, 'user-vertical-head', { state: 'declined', reason_code: 'returns_below_hurdle', comment: 'IRR below hurdle.' });
+      assert.equal(decline.status, 200, JSON.stringify(decline.data));
+      return 'proceed with reason - hold, resume and decline leg OK';
     }));
 });
 
@@ -302,7 +299,7 @@ describe('UAT audit trail (J7)', () => {
       assert.equal(trail.status, 200);
       assert.ok(trail.data.length > 0, 'the opportunity must have an audit trail');
       const actions = new Set(trail.data.map((e) => e.action));
-      for (const a of ['create', 'route_act']) assert.ok(actions.has(a), 'missing audit action ' + a);
+      for (const a of ['create', 'submit', 'transition', 'transition_auto']) assert.ok(actions.has(a), 'missing audit action ' + a);
       for (const e of trail.data) {
         assert.ok(e.actor_email, 'an audit row lacks an actor');
         assert.ok(e.ts, 'an audit row lacks a timestamp');

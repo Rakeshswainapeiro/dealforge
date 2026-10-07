@@ -14,12 +14,13 @@ import {
   statementTemplateCsv, statementTemplateRows,
 } from '../config/statementModel.js';
 import { WACC_OVERRIDE_REASON_MESSAGE } from '../config/wacc.js';
+import { withAttestationSigning } from './support/attestationSigning.js';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:34000').replace(/\/+$/, '');
 
 let online = false;
 
-async function api(path, { method = 'GET', body, user, form } = {}) {
+async function rawApi(path, { method = 'GET', body, user, form } = {}) {
   const headers = {};
   if (user) headers['x-user-id'] = user;
   if (!form) headers['Content-Type'] = 'application/json';
@@ -33,6 +34,7 @@ async function api(path, { method = 'GET', body, user, form } = {}) {
   try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, data };
 }
+const api = withAttestationSigning(rawApi);
 
 function uploadForm(requirementKey, name = 'doc.txt', content = 'hello') {
   const form = new FormData();
@@ -175,10 +177,10 @@ describe('complete submission passes the gate (J1)', () => {
       method: 'POST', user: 'user-deal-lead',
     });
     assert.equal(submit.status, 200);
-    assert.equal(submit.data.state, 'submission');
+    assert.equal(submit.data.state, 'screening_review');
 
     const after = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-deal-lead' });
-    assert.equal(after.data.status, 'submission');
+    assert.equal(after.data.status, 'screening_review');
     assert.ok(after.data.submitted_at);
   });
 
@@ -367,7 +369,7 @@ describe('below-floor exception route (W1-02 / INT-03)', () => {
     }
     const res = await api('/api/gate/opportunities/' + draft.id + '/submit', { method: 'POST', user: 'user-deal-lead' });
     assert.equal(res.status, 200);
-    assert.equal(res.data.state, 'submission');
+    assert.equal(res.data.state, 'screening_review');
     assert.equal(res.data.below_floor.satisfied, true);
 
     const after = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-deal-lead' });
@@ -440,7 +442,7 @@ describe('CEO + CFO attestation gate (W1-06 / INT-09)', () => {
 
     const res = await api('/api/gate/opportunities/' + draft.id + '/submit', { method: 'POST', user: 'user-deal-lead' });
     assert.equal(res.status, 200, JSON.stringify(res.data));
-    assert.equal(res.data.state, 'submission');
+    assert.equal(res.data.state, 'screening_review');
 
     const audit = await api('/api/audit?entity=DealOpportunity&entity_id=' + draft.id, { user: 'user-admin' });
     assert.equal(audit.data.filter((e) => e.action === 'attestation_recorded').length, 2, 'each attestation is audited');
@@ -496,7 +498,7 @@ describe('greenfield extra tests (W1-07 / INT-10)', () => {
 
     const res = await api('/api/gate/opportunities/' + draft.id + '/submit', { method: 'POST', user: 'user-deal-lead' });
     assert.equal(res.status, 200, JSON.stringify(res.data));
-    assert.equal(res.data.state, 'submission');
+    assert.equal(res.data.state, 'screening_review');
   });
 
   test('a Feasibility-stage greenfield does need the full document pack', async (t) => {

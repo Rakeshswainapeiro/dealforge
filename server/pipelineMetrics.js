@@ -4,6 +4,7 @@ import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
 import { canConfigure, isCrossOrgReader } from './rbac.js';
 import { getSlaTargets, STATE_LABELS } from './pipeline.js';
+import { normalizeState } from './config/workflowStates.js';
 import {
   PIPELINE_METRICS_KEY,
   PIPELINE_METRICS_MESSAGES,
@@ -109,6 +110,9 @@ function indexStage(card, transitionsForOpp, state) {
     if (t.to_state) reached.push(t.to_state);
     if (t.to_state && stageTimes[t.to_state] == null) stageTimes[t.to_state] = t.created_at ? new Date(t.created_at).getTime() : null;
   }
+  // Records submitted under the pre-BRD v2 names were "submitted" when they
+  // entered screening, so the funnel's first stage counts them too.
+  if (stageTimes.submitted == null && stageTimes.screening_review != null) stageTimes.submitted = stageTimes.screening_review;
   return { current: state, reached, stageTimes };
 }
 
@@ -117,7 +121,10 @@ export async function buildPipelineMetrics(actor, query = {}, { config } = {}) {
   const cfg = config || await loadPipelineMetricsConfig();
   const range = parseRange(query, { config: cfg });
   const since = rangeStart(range);
-  const { opps, transitions } = await loadMetricRows(actor, { since });
+  const loaded = await loadMetricRows(actor, { since });
+  const opps = loaded.opps;
+  // Legacy state names on older history rows count as their BRD v2 state.
+  const transitions = loaded.transitions.map((t) => ({ ...t, from_state: t.from_state ? normalizeState(t.from_state) : t.from_state, to_state: normalizeState(t.to_state) }));
 
   const byOpp = new Map();
   for (const t of transitions) {
@@ -127,7 +134,7 @@ export async function buildPipelineMetrics(actor, query = {}, { config } = {}) {
 
   const stageByOpportunity = {};
   for (const row of opps) {
-    const state = row.data?.status || 'draft';
+    const state = normalizeState(row.data?.status);
     stageByOpportunity[row.id] = indexStage(row, byOpp.get(row.id) || [], state);
   }
   const slaByState = await getSlaTargets();

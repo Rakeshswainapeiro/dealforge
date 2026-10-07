@@ -3,6 +3,7 @@ import { test, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { qualifyingGateDefaults } from '../config/qualifyingGates.js';
 import { attestationDefaults } from '../config/attestations.js';
+import { withAttestationSigning } from './support/attestationSigning.js';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:34000').replace(/[/]+$/, '');
 const SIRIUS = 'org-sirius-international-holding-limited';
@@ -11,7 +12,7 @@ const FINSTREET = 'org-finstreet-limited';
 
 let online = false;
 
-async function api(path, { method = 'GET', body, user, form } = {}) {
+async function rawApi(path, { method = 'GET', body, user, form } = {}) {
   const headers = {};
   if (user) headers['x-user-id'] = user;
   if (!form) headers['Content-Type'] = 'application/json';
@@ -23,6 +24,7 @@ async function api(path, { method = 'GET', body, user, form } = {}) {
   try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, data };
 }
+const api = withAttestationSigning(rawApi);
 
 function uploadForm(requirementKey, name = 'doc.txt') {
   const form = new FormData();
@@ -98,7 +100,7 @@ describe('withdraw submission with reason (W1-09 / INT-13)', () => {
     });
     assert.equal(res.status, 400);
     const after = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-deal-lead' });
-    assert.equal(after.data.status, 'submission', 'the item is unchanged without a reason');
+    assert.equal(after.data.status, 'screening_review', 'the item is unchanged without a reason');
   });
 
   test('a sibling subsidiary cannot withdraw another org item', async (t) => {
@@ -326,58 +328,115 @@ describe('theme alignment per-dimension citations (W3-13 / SCR-02)', () => {
   });
 });
 
-describe('pipeline state machine (E6.1)', () => {
-  test('walks submission -> screening -> refinement -> approval with audit', async (t) => {
-    if (!online) return t.skip('server offline');
-    const { draft } = await makeSubmitted('user-deal-lead');
-    const toScreening = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-    });
-    assert.equal(toScreening.status, 200);
-    assert.equal(toScreening.data.state, 'screening');
-    const toRefinement = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-vertical-head', body: { state: 'refinement' },
-    });
-    assert.equal(toRefinement.data.state, 'refinement');
-    const toApproval = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-cio', body: { state: 'approval' },
-    });
-    assert.equal(toApproval.data.state, 'approval');
+describe('pipeline state machine (E6.1 / WF-01)', () => {
+  function move(id, user, body) {
+    return api('/api/pipeline/opportunities/' + id + '/transition', { method: 'POST', user, body });
+  }
 
+  test('submission runs the automatic steps and lands in screening review, with audit', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft, submit } = await makeSubmitted('user-deal-lead');
+    assert.equal(submit.state, 'screening_review');
     const { data: history } = await api('/api/pipeline/opportunities/' + draft.id + '/transitions', { user: 'user-sirius-deal-lead' });
     const states = history.map((h) => h.to_state);
-    assert.ok(states.includes('screening') && states.includes('refinement') && states.includes('approval'));
+    for (const s of ['submitted', 'completeness_check', 'initial_screening', 'screening_review']) {
+      assert.ok(states.includes(s), 'expected ' + s + ' in the history');
+    }
+  });
+
+  test('screening review -> proceed to Gate 2 with a reason, then final', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const noReason = await move(draft.id, 'user-vertical-head', { state: 'proceed_to_gate2' });
+    assert.equal(noReason.status, 400, 'a Gate-1 decision needs a reason (WF-05)');
+    const proceed = await move(draft.id, 'user-vertical-head', { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Clears every Gate-1 test' });
+    assert.equal(proceed.status, 200, JSON.stringify(proceed.data));
+    assert.equal(proceed.data.state, 'proceed_to_gate2');
+    const again = await move(draft.id, 'user-vertical-head', { state: 'on_hold', reason_code: 'counterparty_timing', comment: 'x' });
+    assert.equal(again.status, 409, 'nothing leaves a final state');
+  });
+
+  test('on hold can resume to screening review with a comment', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const hold = await move(draft.id, 'user-vertical-head', { state: 'on_hold', reason_code: 'counterparty_timing', comment: 'Seller paused the process' });
+    assert.equal(hold.status, 200, JSON.stringify(hold.data));
+    const bare = await move(draft.id, 'user-vertical-head', { state: 'screening_review' });
+    assert.equal(bare.status, 400, 'resume needs a comment');
+    const resume = await move(draft.id, 'user-vertical-head', { state: 'screening_review', comment: 'Seller is back' });
+    assert.equal(resume.status, 200, JSON.stringify(resume.data));
+    assert.equal(resume.data.state, 'screening_review');
   });
 
   test('rejects an invalid transition', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { status } = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-cio', body: { state: 'approval' },
-    });
-    assert.equal(status, 409);
+    const auto = await move(draft.id, 'user-admin', { state: 'completeness_check' });
+    assert.equal(auto.status, 409, 'nobody takes an automatic step by hand');
+    const back = await move(draft.id, 'user-admin', { state: 'draft' });
+    assert.equal(back.status, 409);
   });
 
-  test('a deal lead cannot push an item past screening', async (t) => {
+  test('a deal lead cannot decide or request information', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { status } = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-deal-lead', body: { state: 'screening' },
-    });
-    assert.equal(status, 403);
+    const proceed = await move(draft.id, 'user-deal-lead', { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'self-approve' });
+    assert.equal(proceed.status, 403);
+    const ask = await move(draft.id, 'user-deal-lead', { state: 'information_requested', question: { subject: 'x', body: 'y' } });
+    assert.equal(ask.status, 403);
   });
 
-  test('returned items can be revised and resubmitted', async (t) => {
+  test('an information request opens a thread; the subsidiary edits, answers and responds', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'returned', reason_code: 'incomplete_financials', comment: 'Add funding detail' },
+    const noQuestion = await move(draft.id, 'user-sirius-deal-lead', { state: 'information_requested' });
+    assert.equal(noQuestion.status, 400, 'an information request needs the question');
+    const ask = await move(draft.id, 'user-sirius-deal-lead', {
+      state: 'information_requested', question: { subject: 'Funding detail', body: 'Split the funding between debt and equity.' },
     });
-    const resubmit = await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-deal-lead', body: { state: 'submission' },
+    assert.equal(ask.status, 200, JSON.stringify(ask.data));
+    assert.equal(ask.data.state, 'information_requested');
+    assert.ok(ask.data.thread_id, 'the question is a tracked thread');
+
+    const edit = await api('/api/entities/DealOpportunity/' + draft.id, {
+      method: 'PUT', user: 'user-deal-lead', body: { funding_source: 'Balance sheet 60%, bank debt 40%' },
     });
-    assert.equal(resubmit.status, 200);
-    assert.equal(resubmit.data.state, 'submission');
+    assert.equal(edit.status, 200, 'the record is editable while information is requested');
+
+    const early = await move(draft.id, 'user-deal-lead', { state: 'screening_review', comment: 'Done' });
+    assert.equal(early.status, 422, 'the question must be answered first');
+
+    const answer = await api('/api/qa/threads/' + ask.data.thread_id + '/messages', {
+      method: 'POST', user: 'user-deal-lead', body: { body: '60% balance sheet, 40% bank debt.', is_response: true },
+    });
+    assert.ok([200, 201].includes(answer.status), JSON.stringify(answer.data));
+
+    // The edit was material, so the CEO and CFO re-attest before the response.
+    const stale = await move(draft.id, 'user-deal-lead', { state: 'screening_review', comment: 'Done' });
+    assert.equal(stale.status, 422, JSON.stringify(stale.data));
+    for (const [key, user] of [['ceo', 'user-ceo'], ['cfo', 'user-cfo']]) {
+      const signed = await api('/api/gate/opportunities/' + draft.id + '/attestations/' + key, { method: 'POST', user });
+      assert.equal(signed.status, 201, JSON.stringify(signed.data));
+    }
+    const respond = await move(draft.id, 'user-deal-lead', { state: 'screening_review', comment: 'Funding split added' });
+    assert.equal(respond.status, 200, JSON.stringify(respond.data));
+    assert.equal(respond.data.state, 'screening_review');
+
+    const locked = await api('/api/entities/DealOpportunity/' + draft.id, {
+      method: 'PUT', user: 'user-deal-lead', body: { funding_source: 'changed again' },
+    });
+    assert.equal(locked.status, 409, 'locked again once back with Sirius');
+  });
+
+  test('status cannot be written through the record API', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const res = await api('/api/entities/DealOpportunity/' + draft.id, {
+      method: 'PUT', user: 'user-admin', body: { status: 'proceed_to_gate2' },
+    });
+    assert.equal(res.status, 409);
+    const after = await api('/api/entities/DealOpportunity/' + draft.id, { user: 'user-admin' });
+    assert.equal(after.data.status, 'screening_review');
   });
 });
 
@@ -387,12 +446,15 @@ describe('screening board (E6.2/6.3/6.4/6.6)', () => {
     const { draft } = await makeSubmitted('user-deal-lead');
     const { status, data } = await api('/api/pipeline/board', { user: 'user-cio' });
     assert.equal(status, 200);
-    const submission = data.columns.find((c) => c.state === 'submission');
-    const card = submission.items.find((i) => i.id === draft.id);
+    assert.ok(!data.columns.some((c) => ['draft', 'submitted', 'completeness_check', 'initial_screening'].includes(c.state)),
+      'drafts and automatic steps are not board columns');
+    const review = data.columns.find((c) => c.state === 'screening_review');
+    const card = review.items.find((i) => i.id === draft.id);
     assert.ok(card, 'expected the new item on the board');
     assert.equal(typeof card.age_days, 'number');
     assert.equal(card.sla_days, 3);
     assert.equal(card.sla_breached, false);
+    assert.ok(card.available_actions.some((a) => a.action === 'proceed'), 'the CIO is offered the decision');
   });
 
   test('a sibling subsidiary does not see another org items on the board', async (t) => {
@@ -406,9 +468,6 @@ describe('screening board (E6.2/6.3/6.4/6.6)', () => {
   test('awaiting-my-review is role-aware', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    await api('/api/pipeline/opportunities/' + draft.id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-    });
     const { data } = await api('/api/pipeline/awaiting-my-review', { user: 'user-sirius-deal-lead' });
     assert.ok(data.items.some((i) => i.id === draft.id));
     const lead = await api('/api/pipeline/awaiting-my-review', { user: 'user-deal-lead' });
@@ -421,7 +480,7 @@ describe('screening board (E6.2/6.3/6.4/6.6)', () => {
     const { data } = await api('/api/pipeline/my-opportunities', { user: 'user-deal-lead' });
     assert.equal(data.org_id, INFINIA);
     assert.ok(data.items.some((i) => i.id === draft.id));
-    assert.ok(data.by_state.submission >= 1);
+    assert.ok(data.by_state.screening_review >= 1);
   });
 
   test('rollup counts descendants at an ancestor org', async (t) => {
@@ -430,7 +489,7 @@ describe('screening board (E6.2/6.3/6.4/6.6)', () => {
     const { status, data } = await api('/api/pipeline/rollup?org_id=' + SIRIUS, { user: 'user-cio' });
     assert.equal(status, 200);
     assert.ok(data.descendants >= 150);
-    assert.ok((data.by_org[INFINIA]?.submission || 0) >= 1, 'expected the Infinia submission in the rollup');
+    assert.ok((data.by_org[INFINIA]?.screening_review || 0) >= 1, 'expected the Infinia submission in the rollup');
   });
 });
 

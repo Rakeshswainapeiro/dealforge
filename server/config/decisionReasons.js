@@ -47,7 +47,8 @@ export function defaultDecisionReasonConfig() {
       label: c.label,
       description: c.description,
       // Whether free text is mandatory alongside the code for this class.
-      require_text: c.key === 'decline',
+      // WF-05: every screening decision carries free text as well as a code.
+      require_text: ['decline', 'proceed', 'hold'].includes(c.key),
       enabled: true,
       reasons: reasonsForClass(c.key).map((r) => ({
         id: r.id,

@@ -58,6 +58,15 @@ import {
 
 const DRAFT_STATUS = "draft";
 
+// BRD v2 WF-01: the record is editable only as a draft or while Sirius has
+// requested information. Older records may still carry a pre-v2 state name.
+const LEGACY_STATES = {
+  submission: "screening_review", screening: "screening_review", returned: "information_requested",
+  refinement: "proceed_to_gate2", approval: "proceed_to_gate2",
+};
+const EDITABLE_STATES = ["draft", "information_requested"];
+const normalizeState = (status) => LEGACY_STATES[status] || status || DRAFT_STATUS;
+
 // Fallback column keys for the part B page-4 financial grid (FIN-01). The
 // authoritative list is served by GET /api/gate/fields (config/financials.js);
 // this only seeds the form shape before that request returns.
@@ -65,12 +74,13 @@ const DEFAULT_FIN_PERIOD_KEYS = ["fy3a", "fy2a", "fy1a", "y1p", "y2p", "y3p", "y
 
 const STATUS_META = {
   draft: { label: "Draft", className: "bg-slate-100 text-slate-700 border-slate-200" },
-  submission: { label: "Submitted", className: "bg-teal-100 text-teal-800 border-teal-200" },
-  screening: { label: "Screening", className: "bg-blue-100 text-blue-800 border-blue-200" },
-  refinement: { label: "Refinement", className: "bg-indigo-100 text-indigo-800 border-indigo-200" },
-  approval: { label: "Approval", className: "bg-purple-100 text-purple-800 border-purple-200" },
-  returned: { label: "Returned", className: "bg-amber-100 text-amber-800 border-amber-200" },
+  submitted: { label: "Submitted", className: "bg-teal-100 text-teal-800 border-teal-200" },
+  screening_review: { label: "Screening Review", className: "bg-blue-100 text-blue-800 border-blue-200" },
+  information_requested: { label: "Information Requested", className: "bg-amber-100 text-amber-800 border-amber-200" },
+  on_hold: { label: "On Hold", className: "bg-slate-200 text-slate-800 border-slate-300" },
+  proceed_to_gate2: { label: "Proceed to Gate 2", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   declined: { label: "Declined", className: "bg-red-100 text-red-800 border-red-200" },
+  withdrawn: { label: "Withdrawn", className: "bg-gray-100 text-gray-700 border-gray-300" },
   // Legacy pipeline states, shown for opportunities created elsewhere.
   new: { label: "New", className: "bg-slate-100 text-slate-700 border-slate-200" },
   contacted: { label: "Contacted", className: "bg-indigo-100 text-indigo-800 border-indigo-200" },
@@ -328,7 +338,8 @@ function formatDateTime(value) {
   });
 }
 
-function renderStatusBadge(status) {
+function renderStatusBadge(rawStatus) {
+  const status = normalizeState(rawStatus);
   const meta = STATUS_META[status] || {
     label: status || "unknown",
     className: "bg-slate-100 text-slate-700 border-slate-200",
@@ -639,9 +650,9 @@ export default function SubmitOpportunity() {
       setSubmitResult(result);
       setBlockedGate(null);
       setBlockedMessage(null);
-      setForm((prev) => ({ ...prev, status: result?.state || "submission" }));
+      setForm((prev) => ({ ...prev, status: result?.state || "screening_review" }));
       invalidateFor(selectedId);
-      toast({ title: "Submitted for screening", description: `State: ${result?.state || "submission"}` });
+      toast({ title: "Submitted for screening", description: "Sirius now has it in Screening Review. The record is locked until they decide or ask for information." });
     },
     onError: async (error) => {
       // A blocked submit is never shown as a success. Prefer the gate payload on
@@ -672,7 +683,45 @@ export default function SubmitOpportunity() {
     },
   });
 
-  const busy = saveMutation.isPending || submitMutation.isPending;
+  // Information requested (WF-04): the questions Sirius raised, the answers,
+  // and the response that sends the record back to Screening Review.
+  const currentState = normalizeState(form.status);
+  const editable = !selectedId || EDITABLE_STATES.includes(currentState);
+  const infoRequested = Boolean(selectedId) && currentState === "information_requested";
+  const [answers, setAnswers] = useState({});
+  const [responseNote, setResponseNote] = useState("");
+  const infoThreadsQuery = useQuery({
+    queryKey: ["qa", "threads", selectedId, "info-requests"],
+    queryFn: () => api.qa.threads(selectedId),
+    enabled: infoRequested,
+  });
+  const infoThreads = (Array.isArray(infoThreadsQuery.data) ? infoThreadsQuery.data : infoThreadsQuery.data?.threads || [])
+    .filter((thread) => thread.kind === "information_request");
+  const unanswered = infoThreads.filter((thread) => thread.display_status === "open");
+
+  const answerMutation = useMutation({
+    mutationFn: ({ threadId, body }) => api.qa.reply(threadId, body, true),
+    onSuccess: (_result, variables) => {
+      setAnswers((prev) => ({ ...prev, [variables.threadId]: "" }));
+      queryClient.invalidateQueries({ queryKey: ["qa"] });
+      toast({ title: "Answer sent", description: "Sirius can see your answer on the thread." });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Could not send the answer", description: error?.message }),
+  });
+
+  const respondMutation = useMutation({
+    mutationFn: () => api.pipeline.transition(selectedId, "screening_review", { comment: responseNote.trim() || undefined }),
+    onSuccess: (result) => {
+      setResponseNote("");
+      setForm((prev) => ({ ...prev, status: result?.state || "screening_review" }));
+      invalidateFor(selectedId);
+      queryClient.invalidateQueries({ queryKey: ["qa"] });
+      toast({ title: "Response sent to Sirius", description: "The opportunity is back in Screening Review." });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Response not sent", description: error?.message }),
+  });
+
+  const busy = saveMutation.isPending || submitMutation.isPending || respondMutation.isPending;
 
   // Pre-form self-screen (W1-01 / INT-02). The server owns the decision.
   const screenMutation = useMutation({
@@ -3268,7 +3317,8 @@ export default function SubmitOpportunity() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     onClick={handleSave}
-                    disabled={busy}
+                    disabled={busy || !editable}
+                    title={editable ? undefined : "Locked while Sirius reviews it"}
                     className="bg-teal-600 hover:bg-teal-700 gap-2"
                   >
                     {saveMutation.isPending ? (
@@ -3278,6 +3328,7 @@ export default function SubmitOpportunity() {
                     )}
                     {selectedId ? "Save changes" : "Save as draft"}
                   </Button>
+                  {(!selectedId || currentState === DRAFT_STATUS) && (
                   <Button
                     variant="outline"
                     className="gap-2"
@@ -3291,12 +3342,94 @@ export default function SubmitOpportunity() {
                     )}
                     {t("submit.submitForScreening")}
                   </Button>
+                  )}
+                  {!editable && (
+                    <span className="text-sm text-slate-500" data-testid="capture-readonly">
+                      Locked in {STATUS_META[currentState]?.label || currentState}. Sirius will unlock it if they need more information.
+                    </span>
+                  )}
                   {!selectedId && (
                     <span className="text-sm text-slate-500">Save the draft first to unlock the gate checklist.</span>
                   )}
                 </div>
               </CardContent>
             </Card>
+            )}
+
+            {/* Information requested (WF-04) -------------------------------------- */}
+            {infoRequested && (
+              <Card className="border-amber-200 bg-amber-50/60 shadow-sm" data-testid="info-request-panel">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base text-amber-900">
+                    <AlertTriangle className="w-4 h-4" /> Sirius has requested information
+                  </CardTitle>
+                  <CardDescription className="text-amber-900/80">
+                    The form is unlocked. Answer each question, update the record if needed, then send your response.
+                    A change to the figures clears the CEO and CFO attestations, so they re-confirm before you respond.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {infoThreadsQuery.isLoading && (
+                    <p className="text-sm text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading questions...</p>
+                  )}
+                  {infoThreads.map((thread) => (
+                    <div key={thread.id} className="rounded-md border border-amber-200 bg-white p-3 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium text-slate-900">{thread.subject}</p>
+                        <div className="flex items-center gap-2">
+                          {thread.due_at && (
+                            <Badge variant="outline" className={cn(thread.overdue ? "bg-red-100 text-red-800 border-red-200" : "bg-slate-100 text-slate-700")}>
+                              due {formatDateTime(thread.due_at)}
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className={thread.display_status === "open" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-emerald-100 text-emerald-800 border-emerald-200"}>
+                            {thread.display_status === "open" ? "awaiting your answer" : thread.display_status}
+                          </Badge>
+                        </div>
+                      </div>
+                      {thread.first_message && <p className="text-sm text-slate-700 whitespace-pre-wrap">{thread.first_message}</p>}
+                      {thread.display_status === "open" && (
+                        <div className="space-y-2">
+                          <Textarea
+                            rows={3}
+                            value={answers[thread.id] || ""}
+                            placeholder="Your answer..."
+                            data-testid={`info-answer-${thread.id}`}
+                            onChange={(event) => setAnswers((prev) => ({ ...prev, [thread.id]: event.target.value }))}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-2"
+                            disabled={!String(answers[thread.id] || "").trim() || answerMutation.isPending}
+                            onClick={() => answerMutation.mutate({ threadId: thread.id, body: answers[thread.id].trim() })}
+                          >
+                            <Send className="w-3.5 h-3.5" /> Send answer
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <Separator />
+                  <div className="space-y-2">
+                    <Label htmlFor="response-note">Note to Sirius (optional)</Label>
+                    <Textarea id="response-note" rows={2} value={responseNote} onChange={(event) => setResponseNote(event.target.value)} />
+                    <Button
+                      className="bg-teal-600 hover:bg-teal-700 gap-2"
+                      disabled={busy || unanswered.length > 0}
+                      title={unanswered.length > 0 ? "Answer every question first" : undefined}
+                      data-testid="send-response"
+                      onClick={() => respondMutation.mutate()}
+                    >
+                      {respondMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      Send response to Sirius
+                    </Button>
+                    {unanswered.length > 0 && (
+                      <p className="text-xs text-amber-800">{unanswered.length} question(s) still need an answer.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Submit result ------------------------------------------------------ */}
@@ -3536,6 +3669,7 @@ export default function SubmitOpportunity() {
                                       variant="ghost"
                                       size="icon"
                                       className="text-red-600 hover:text-red-700 hover:bg-red-50 shrink-0"
+                                      disabled={!editable}
                                       onClick={() => setPendingDelete({ document: current, label: requirement.label })}
                                     >
                                       <Trash2 className="w-4 h-4" />
@@ -3550,13 +3684,13 @@ export default function SubmitOpportunity() {
                                 <input
                                   type="file"
                                   className="hidden"
-                                  disabled={isCurrentUpload}
+                                  disabled={isCurrentUpload || !editable}
                                   onChange={(event) => handleUpload(requirement.key, event)}
                                 />
                                 <span
                                   className={cn(
                                     "inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 cursor-pointer hover:bg-slate-50",
-                                    isCurrentUpload && "opacity-50 pointer-events-none"
+                                    (isCurrentUpload || !editable) && "opacity-50 pointer-events-none"
                                   )}
                                 >
                                   {isCurrentUpload ? (

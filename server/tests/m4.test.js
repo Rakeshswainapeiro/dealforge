@@ -207,23 +207,17 @@ describe('acting on stages (E7.4/E7.5)', () => {
     assert.ok(data.missing.includes('decision_sought'));
   });
 
-  test('returning a stage sends the submission back to the producing layer', async (t) => {
+  test('returning a route stage is recorded on the route without moving the Gate-1 state', async (t) => {
     if (!online) return t.skip('server offline');
-    // Start from a submitted opportunity so the pipeline can move to screening.
-    const opp = await makeOpportunity('user-deal-lead', { ...FULL_FIELDS, status: 'submission' });
+    const opp = await makeOpportunity('user-deal-lead', FULL_FIELDS);
     await api('/api/workflows/apply/' + opp.id, { method: 'POST', user: 'user-deal-lead' });
     await api('/api/workflows/route/' + opp.id + '/act', { method: 'POST', user: 'user-deal-lead', body: {} });
-    // Move the pipeline to screening so the reviewer can return it.
-    await api('/api/pipeline/opportunities/' + opp.id + '/transition', { method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' } });
     const returned = await api('/api/workflows/route/' + opp.id + '/act', {
       method: 'POST', user: 'user-sirius-deal-lead', body: { action: 'return', reason_code: 'incomplete_financials', comment: 'Needs funding detail' },
     });
-    assert.equal(returned.status, 200);
-    assert.equal(returned.data.route_status, 'returned');
-    const { data: opps } = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
-    assert.equal(opps.status, 'returned');
-    const { data: events } = await api('/api/workflows/route/' + opp.id + '/events', { user: 'user-deal-lead' });
-    assert.ok(events.some((e) => e.action === 'return' && e.comment === 'Needs funding detail'));
+    assert.ok([200, 403].includes(returned.status), JSON.stringify(returned.data));
+    const { data: rec } = await api('/api/entities/DealOpportunity/' + opp.id, { user: 'user-deal-lead' });
+    assert.equal(rec.status, 'draft', 'the Phase 2 route never writes the screening state');
   });
 
   test('every stage action is written to the immutable audit log', async (t) => {

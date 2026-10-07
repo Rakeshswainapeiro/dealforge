@@ -60,30 +60,30 @@ describe('pipeline metrics logic (W7-03)', () => {
   test('funnelCounts counts each opportunity at every stage it reached', () => {
     const opps = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
     const stageByOpportunity = {
-      a: { current: 'approval', reached: ['submission', 'screening', 'refinement', 'approval'] },
-      b: { current: 'screening', reached: ['submission', 'screening'] },
-      c: { current: 'declined', reached: ['submission', 'screening', 'declined'] },
+      a: { current: 'proceed_to_gate2', reached: ['submitted', 'screening_review', 'proceed_to_gate2'] },
+      b: { current: 'screening_review', reached: ['submitted', 'screening_review'] },
+      c: { current: 'declined', reached: ['submitted', 'screening_review', 'declined'] },
     };
     const out = funnelCounts(opps, { stageByOpportunity });
     assert.equal(out.entered, 3);
-    assert.equal(out.stages.find((s) => s.key === 'submission').count, 3);
-    assert.equal(out.stages.find((s) => s.key === 'screening').count, 3);
-    assert.equal(out.stages.find((s) => s.key === 'approval').count, 1);
+    assert.equal(out.stages.find((s) => s.key === 'submitted').count, 3);
+    assert.equal(out.stages.find((s) => s.key === 'screening_review').count, 3);
+    assert.equal(out.stages.find((s) => s.key === 'proceed_to_gate2').count, 1);
     assert.equal(out.branches.declined, 1);
   });
 
   test('funnelCounts computes conversion percentages', () => {
     const opps = [{ id: 'a' }, { id: 'b' }];
     const stageByOpportunity = {
-      a: { current: 'approval', reached: ['submission', 'screening', 'refinement', 'approval'] },
-      b: { current: 'screening', reached: ['submission', 'screening'] },
+      a: { current: 'proceed_to_gate2', reached: ['submitted', 'screening_review', 'proceed_to_gate2'] },
+      b: { current: 'screening_review', reached: ['submitted', 'screening_review'] },
     };
     const out = funnelCounts(opps, { stageByOpportunity });
-    const approval = out.stages.find((s) => s.key === 'approval');
-    assert.equal(approval.from_first, 50);
-    assert.equal(approval.from_previous, 100);
+    const proceed = out.stages.find((s) => s.key === 'proceed_to_gate2');
+    assert.equal(proceed.from_first, 50);
+    assert.equal(proceed.from_previous, 50);
     assert.equal(out.stages[0].from_previous, null);
-    assert.deepEqual(FUNNEL_STAGE_KEYS, ['submission', 'screening', 'refinement', 'approval']);
+    assert.deepEqual(FUNNEL_STAGE_KEYS, ['submitted', 'screening_review', 'proceed_to_gate2']);
   });
 
   test('reasonBreakdown groups the leaving transitions by reason code', () => {
@@ -91,59 +91,59 @@ describe('pipeline metrics logic (W7-03)', () => {
       { to_state: 'declined', reason_code: 'R-01', reason_text: 'Out of mandate' },
       { to_state: 'declined', reason_code: 'R-01', reason_text: 'Out of mandate' },
       { to_state: 'declined', reason_code: 'R-02', reason_text: 'Valuation' },
-      { to_state: 'returned', reason_code: 'R-03', reason_text: 'Incomplete' },
-      { to_state: 'screening' },
+      { to_state: 'on_hold', reason_code: 'R-03', reason_text: 'Timing' },
+      { to_state: 'screening_review' },
     ];
     const out = reasonBreakdown(transitions);
     assert.equal(out.declined.total, 3);
     assert.equal(out.declined.reasons[0].code, 'R-01');
     assert.equal(out.declined.reasons[0].count, 2);
-    assert.equal(out.returned.total, 1);
+    assert.equal(out.on_hold.total, 1);
     assert.equal(out.withdrawn.total, 0);
   });
 
   test('cycleTime averages elapsed days and compares to the SLA', () => {
     const t0 = Date.UTC(2026, 0, 1);
     const stageByOpportunity = {
-      a: { stageTimes: { submission: t0, screening: t0 + 4 * DAY, refinement: t0 + 10 * DAY, approval: t0 + 12 * DAY } },
-      b: { stageTimes: { submission: t0, screening: t0 + 6 * DAY, refinement: t0 + 16 * DAY } },
+      a: { stageTimes: { submitted: t0, screening_review: t0 + 4 * DAY, proceed_to_gate2: t0 + 10 * DAY } },
+      b: { stageTimes: { submitted: t0, screening_review: t0 + 6 * DAY, proceed_to_gate2: t0 + 16 * DAY } },
     };
-    const out = cycleTime(stageByOpportunity, { slaTargets: { submission: { days: 5 }, screening: { days: 5 } } });
-    const submission = out.stages.find((s) => s.key === 'submission');
-    assert.equal(submission.samples, 2);
-    assert.equal(submission.avg_days, 5);
-    assert.equal(submission.sla_days, 5);
-    assert.equal(submission.within_sla, true);
-    const screening = out.stages.find((s) => s.key === 'screening');
-    assert.equal(screening.samples, 2);
-    assert.equal(screening.avg_days, 8);
-    assert.equal(screening.within_sla, false);
-    assert.equal(screening.avg_vs_sla, 3);
+    const out = cycleTime(stageByOpportunity, { slaTargets: { submitted: { days: 5 }, screening_review: { days: 5 } } });
+    const submitted = out.stages.find((s) => s.key === 'submitted');
+    assert.equal(submitted.samples, 2);
+    assert.equal(submitted.avg_days, 5);
+    assert.equal(submitted.sla_days, 5);
+    assert.equal(submitted.within_sla, true);
+    const review = out.stages.find((s) => s.key === 'screening_review');
+    assert.equal(review.samples, 2);
+    assert.equal(review.avg_days, 8);
+    assert.equal(review.within_sla, false);
+    assert.equal(review.avg_vs_sla, 3);
   });
 
   test('cycleTime measures an open stage up to now', () => {
     const t0 = Date.UTC(2026, 0, 1);
     const now = new Date(Date.UTC(2026, 0, 11));
-    const stageByOpportunity = { a: { stageTimes: { submission: t0 } } };
+    const stageByOpportunity = { a: { stageTimes: { screening_review: t0 } } };
     const out = cycleTime(stageByOpportunity, { now });
-    const submission = out.stages.find((s) => s.key === 'submission');
-    assert.equal(submission.samples, 1);
-    assert.equal(submission.avg_days, 10);
+    const review = out.stages.find((s) => s.key === 'screening_review');
+    assert.equal(review.samples, 1);
+    assert.equal(review.avg_days, 10);
   });
 
   test('buildMetrics assembles the pack and counts cycle breaches', () => {
     const t0 = Date.UTC(2026, 0, 1);
     const opps = [{ id: 'a' }, { id: 'b' }];
     const stageByOpportunity = {
-      a: { current: 'approval', reached: ['submission', 'screening', 'refinement', 'approval'], stageTimes: { submission: t0, screening: t0 + 2 * DAY, refinement: t0 + 5 * DAY, approval: t0 + 7 * DAY } },
-      b: { current: 'declined', reached: ['submission', 'screening', 'declined'], stageTimes: { submission: t0, screening: t0 + 9 * DAY } },
+      a: { current: 'proceed_to_gate2', reached: ['submitted', 'screening_review', 'proceed_to_gate2'], stageTimes: { submitted: t0, screening_review: t0, proceed_to_gate2: t0 + 2 * DAY } },
+      b: { current: 'declined', reached: ['submitted', 'screening_review', 'declined'], stageTimes: { submitted: t0, screening_review: t0, declined: t0 + 9 * DAY } },
     };
     const transitions = [{ to_state: 'declined', reason_code: 'R-01' }];
-    const out = buildMetrics(opps, transitions, { stageByOpportunity, slaTargets: { submission: { days: 5 }, screening: { days: 5 } } });
+    const out = buildMetrics(opps, transitions, { stageByOpportunity, slaTargets: { screening_review: { days: 3 } } });
     assert.equal(out.total, 2);
     assert.equal(out.entered, 2);
-    assert.equal(out.funnel.find((s) => s.key === 'approval').count, 1);
+    assert.equal(out.funnel.find((s) => s.key === 'proceed_to_gate2').count, 1);
     assert.equal(out.reasons.declined.total, 1);
-    assert.ok(out.cycle_breaches >= 1, 'the 9-day screening breaches the 5-day SLA');
+    assert.ok(out.cycle_breaches >= 1, 'the 9-day screening review breaches the 3-day SLA');
   });
 });

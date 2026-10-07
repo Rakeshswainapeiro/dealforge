@@ -2,6 +2,8 @@ import { pool } from './db.js';
 import { writeAudit } from './audit.js';
 import { addDocumentVersion } from './gate.js';
 import { transition } from './pipeline.js';
+import { systemSubmit } from './lifecycle.js';
+import { normalizeState } from './config/workflowStates.js';
 import { applyRoute } from './workflows.js';
 import { upsertTheme, getEffectiveTheme, getThresholds, upsertThresholds } from './themes.js';
 import { setRelatedParty } from './relatedParty.js';
@@ -351,30 +353,33 @@ async function seedOne(spec, owners) {
     });
   }
 
-  // Walk the pipeline through the real audited transition API so history and
-  // SLA age are genuine, never a direct state write.
+  // Walk the lifecycle through the real audited engine so history and SLA age
+  // are genuine. Submit uses the trusted-loader path (the fixtures are sample
+  // data, not all of them pass every submission gate); every later move goes
+  // through the same transition rules a person's action does.
   const reviewer = await buildActorByEmail('deal.lead@sirius.local', SIRIUS_ORG_ID);
-  const approver = await buildActorByEmail('ic.member@sirius.local', SIRIUS_ORG_ID);
-  if (spec.state !== 'draft') {
-    // The submit leg is a producing-layer write; record it as such, matching
-    // the gate's submit route (submitted_at/by on the record).
+  const target = normalizeState(spec.state);
+  if (target !== 'draft') {
+    await systemSubmit(id, owner, { comment: 'Submitted for screening.' });
     await pool.query(
-      "UPDATE entity_record SET data = jsonb_set(jsonb_set(data, '{submitted_at}', to_jsonb($2::text)), '{submitted_by}', to_jsonb($3::text)), updated_date = now() WHERE entity = 'DealOpportunity' AND id = $1",
-      [id, new Date().toISOString(), spec.ownerEmail]
+      "UPDATE entity_record SET data = jsonb_set(data, '{submitted_by}', to_jsonb($2::text)) WHERE entity = 'DealOpportunity' AND id = $1",
+      [id, spec.ownerEmail]
     );
-    await transition(id, 'submission', { actor: owner, comment: 'Submitted for screening.' });
   }
-  if (['screening', 'refinement', 'declined'].includes(spec.state)) {
-    await transition(id, 'screening', { actor: reviewer, comment: 'Passed the initial screen.' });
+  if (target === 'proceed_to_gate2') {
+    await transition(id, 'proceed_to_gate2', { actor: reviewer, reasonCode: 'clears_gate1', comment: 'Gate 1 checks clear; proceed to the Gate 2 screen.' });
   }
-  if (['refinement', 'declined'].includes(spec.state)) {
-    await transition(id, 'refinement', { actor: reviewer, comment: 'Moved into investment-team refinement.' });
+  if (target === 'declined') {
+    await transition(id, 'declined', { actor: reviewer, reasonCode: 'returns_below_hurdle', comment: 'Return hurdle not met on a risk-adjusted basis.' });
   }
-  if (spec.state === 'declined') {
-    await transition(id, 'declined', { actor: approver, comment: 'Return hurdle not met on a risk-adjusted basis.' });
+  if (target === 'on_hold') {
+    await transition(id, 'on_hold', { actor: reviewer, reasonCode: 'counterparty_timing', comment: 'The counterparty has paused its sale process until Q1.' });
   }
-  if (spec.state === 'returned') {
-    await transition(id, 'returned', { actor: reviewer, comment: 'Clarify the synergy case and refresh the financials.' });
+  if (target === 'information_requested') {
+    await transition(id, 'information_requested', {
+      actor: reviewer,
+      question: { subject: 'Synergy case and refreshed financials', body: 'Please evidence the synergy case and refresh the financials to the latest quarter.' },
+    });
   }
 
   if (spec.route) {

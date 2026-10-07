@@ -59,6 +59,11 @@ function toJsonb(value) {
  * Record one immutable audit event. Never throws into the caller's flow:
  * a failed audit write must not silently swallow the business operation, but
  * it also must not crash it - the failure is logged loudly instead.
+ *
+ * Pass `client` (a pg client inside an open transaction) to write the event in
+ * the caller's transaction, so a state change and its audit row commit or roll
+ * back together. In that mode a failure is thrown, because the caller's
+ * transaction must not commit a change without its audit row.
  */
 export async function writeAudit({
   entity,
@@ -70,6 +75,7 @@ export async function writeAudit({
   before = null,
   after = null,
   comment = null,
+  client: callerClient = null,
 } = {}) {
   const entityIdStr = entityId != null ? String(entityId) : null;
   const actorId = actor?.id || null;
@@ -80,9 +86,10 @@ export async function writeAudit({
 
   try {
     const config = await loadAuditChainConfig();
+    const db = callerClient || pool;
 
     if (!config.enabled) {
-      const { rows } = await pool.query(
+      const { rows } = await db.query(
         'INSERT INTO audit_event (entity, entity_id, action, actor_id, actor_email, org_id, role, before, after, comment) ' +
         'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, ts',
         [entity, entityIdStr, action, actorId, actorEmail, resolvedOrg, role || null, beforeJson, afterJson, comment]
@@ -92,9 +99,9 @@ export async function writeAudit({
 
     // Serialise chain appends in a transaction so seq and prev_hash are read and
     // written atomically; without the lock two writers could share a prev_hash.
-    const client = await pool.connect();
+    const client = callerClient || await pool.connect();
     try {
-      await client.query('BEGIN');
+      if (!callerClient) await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [AUDIT_CHAIN_LOCK_KEY]);
       const { rows: seqRows } = await client.query('SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM audit_event');
       const seq = Number(seqRows[0].next_seq);
@@ -123,16 +130,17 @@ export async function writeAudit({
         'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id, ts, seq, prev_hash, hash',
         [entity, entityIdStr, action, actorId, actorEmail, resolvedOrg, role || null, beforeJson, afterJson, comment, seq, prevHash, hash, ts]
       );
-      await client.query('COMMIT');
+      if (!callerClient) await client.query('COMMIT');
       return rows[0];
     } catch (txErr) {
-      await client.query('ROLLBACK').catch(() => {});
+      if (!callerClient) await client.query('ROLLBACK').catch(() => {});
       throw txErr;
     } finally {
-      client.release();
+      if (!callerClient) client.release();
     }
   } catch (err) {
     console.error('[audit] failed to write audit event:', err.message);
+    if (callerClient) throw err;
     return null;
   }
 }

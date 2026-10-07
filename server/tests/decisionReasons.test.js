@@ -42,9 +42,11 @@ describe('decision reason codes (W6-01 / WF-05)', () => {
 
   test('pipeline states map to their decision class', () => {
     assert.equal(decisionClassForState('declined').key, 'decline');
-    assert.equal(decisionClassForState('returned').key, 'return');
+    assert.equal(decisionClassForState('proceed_to_gate2').key, 'proceed');
+    assert.equal(decisionClassForState('on_hold').key, 'hold');
     assert.equal(decisionClassForState('withdrawn').key, 'withdraw');
-    assert.equal(decisionClassForState('screening'), null);
+    assert.equal(decisionClassForState('information_requested'), null, 'an information request carries a question, not a reason code');
+    assert.equal(decisionClassForState('screening_review'), null);
   });
 
   test('validation rejects an unknown class', () => {

@@ -65,15 +65,19 @@ import SiriusMemoDialog from "@/components/pipeline/SiriusMemoDialog";
 // payloads verbatim (api.pipeline.*) and never re-derives gate/score/state logic.
 // ---------------------------------------------------------------------------
 
-const BOARD_STATES = ["submission", "screening", "refinement", "approval", "returned", "declined", "withdrawn"];
+// BRD v2 WF-01. The column list and labels come from /api/pipeline/states;
+// this is only the fallback order and the colour for each state.
+const BOARD_STATES = ["screening_review", "information_requested", "on_hold", "proceed_to_gate2", "declined", "withdrawn"];
 
 const STATE_META = {
   draft: { label: "Draft", className: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-400" },
-  submission: { label: "Submission", className: "bg-teal-100 text-teal-800 border-teal-200", dot: "bg-teal-500" },
-  screening: { label: "Screening", className: "bg-blue-100 text-blue-800 border-blue-200", dot: "bg-blue-500" },
-  refinement: { label: "Refinement", className: "bg-indigo-100 text-indigo-800 border-indigo-200", dot: "bg-indigo-500" },
-  approval: { label: "Approval", className: "bg-purple-100 text-purple-800 border-purple-200", dot: "bg-purple-500" },
-  returned: { label: "Returned", className: "bg-amber-100 text-amber-800 border-amber-200", dot: "bg-amber-500" },
+  submitted: { label: "Submitted", className: "bg-teal-100 text-teal-800 border-teal-200", dot: "bg-teal-500" },
+  completeness_check: { label: "Completeness Check", className: "bg-teal-100 text-teal-800 border-teal-200", dot: "bg-teal-500" },
+  initial_screening: { label: "Initial Screening", className: "bg-teal-100 text-teal-800 border-teal-200", dot: "bg-teal-500" },
+  screening_review: { label: "Screening Review", className: "bg-blue-100 text-blue-800 border-blue-200", dot: "bg-blue-500" },
+  information_requested: { label: "Information Requested", className: "bg-amber-100 text-amber-800 border-amber-200", dot: "bg-amber-500" },
+  on_hold: { label: "On Hold", className: "bg-slate-200 text-slate-800 border-slate-300", dot: "bg-slate-500" },
+  proceed_to_gate2: { label: "Proceed to Gate 2", className: "bg-emerald-100 text-emerald-800 border-emerald-200", dot: "bg-emerald-500" },
   declined: { label: "Declined", className: "bg-red-100 text-red-800 border-red-200", dot: "bg-red-500" },
   withdrawn: { label: "Withdrawn", className: "bg-gray-100 text-gray-700 border-gray-300", dot: "bg-gray-500" },
 };
@@ -101,10 +105,17 @@ const SCREENING_RECOMMENDATION_META = {
   stop: { label: "Blocking checks open", className: "bg-red-100 text-red-800 border-red-200" },
 };
 
-const COMMENT_REQUIRED_STATES = new Set(["returned", "declined", "withdrawn"]);
-
-// The decision class a comment-required pipeline state maps to (W6-01).
-const STATE_DECISION_CLASS = { returned: "return", declined: "decline", withdrawn: "withdraw" };
+// Each action the server offers carries what it needs: a reason class (a
+// reason code plus text, WF-05), a question (an information request, WF-04)
+// or a comment (resuming a held item).
+function actionNeeds(action) {
+  const requires = action?.requires || [];
+  return {
+    reason: Boolean(action?.reason_class),
+    question: requires.includes("question"),
+    comment: Boolean(action?.reason_class) || requires.includes("comment"),
+  };
+}
 
 function stateMeta(state) {
   return STATE_META[state] || {
@@ -273,7 +284,9 @@ export default function ScreeningBoard() {
 
   const [selectedId, setSelectedId] = useState(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState(null);
-  const [pendingTransition, setPendingTransition] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
+  const [questionSubject, setQuestionSubject] = useState("");
+  const [questionDue, setQuestionDue] = useState("");
   const [comment, setComment] = useState("");
   const [reasonCode, setReasonCode] = useState("");
   const [memoOpen, setMemoOpen] = useState(false);
@@ -353,7 +366,7 @@ export default function ScreeningBoard() {
     enabled: Boolean(selectedId),
   });
 
-  // Decision reason codes (W6-01 / WF-05). A move to returned / declined /
+  // must carry a code from the maintained catalogue.
   // withdrawn must carry a code from the maintained catalogue.
   const decisionReasonsQuery = useQuery({
     queryKey: ["decision-reasons"],
@@ -396,8 +409,8 @@ export default function ScreeningBoard() {
   });
 
   const transitionMutation = useMutation({
-    mutationFn: ({ id, state, note, code, text }) =>
-      api.pipeline.transition(id, state, { comment: note, reasonCode: code, reasonText: text }),
+    mutationFn: ({ id, state, note, code, text, question }) =>
+      api.pipeline.transition(id, state, { comment: note, reasonCode: code, reasonText: text, question }),
 
     onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["pipeline", "board"] });
@@ -407,9 +420,12 @@ export default function ScreeningBoard() {
       queryClient.invalidateQueries({ queryKey: ["pipeline", "transitions", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["pipeline", "alignment", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["pipeline", "screening", variables.id] });
-      setPendingTransition(null);
+      setPendingAction(null);
       setComment("");
       setReasonCode("");
+      setQuestionSubject("");
+      setQuestionDue("");
+      queryClient.invalidateQueries({ queryKey: ["qa"] });
       toast({
         title: "State updated",
         description: `${stateMeta(result?.from_state).label} → ${stateMeta(result?.state ?? variables.state).label}`,
@@ -610,27 +626,13 @@ export default function ScreeningBoard() {
   const screening = screeningQuery.data?.screening;
   const transitionsList = Array.isArray(transitionsQuery.data) ? transitionsQuery.data : [];
 
-  const allowedNextStates = useMemo(() => {
-    const state = selectedCard?.state;
-    if (!state) return [];
-    const next = statesQuery.data?.transitions?.[state] || [];
-    // Withdrawing is a producing-layer action (INT-13): only offer it where the
-    // server would allow it, so the UI never promises a rejected transition.
-    return next.filter((s) => s !== "withdrawn" || selectedCard?.can_withdraw);
-  }, [statesQuery.data, selectedCard]);
-
-  // The Gate-1 screening decisions (WF-08) are reserved to the roles the ticket
-  // band names. The button stays visible but is disabled when this user is not
-  // delegated, matching the server guard rather than hiding the rule.
-  const GATE1_TARGETS = new Set(["refinement", "declined"]);
-  const gate1Blocked = (state) =>
-    GATE1_TARGETS.has(state) &&
-    selectedCard?.gate1_authority &&
-    selectedCard.gate1_authority.authorized === false;
-  // A flagged related-party deal cannot take the Gate-1 screening decision
-  // until an independent, non-conflicted sign-off is on file (W6-03 / WF-06).
-  const rpBlocked = (state) =>
-    GATE1_TARGETS.has(state) && Boolean(selectedCard?.related_party_overlay?.blocked);
+  // The moves this user may take on the selected card, computed by the server
+  // (WF-01): role, ownership, Delegation of Authority and the related-party
+  // overlay are already applied. A disabled action carries its reason.
+  const availableActions = useMemo(
+    () => (Array.isArray(selectedCard?.available_actions) ? selectedCard.available_actions : []),
+    [selectedCard]
+  );
 
   // Column order & SLA targets come straight from the server definition.
   const orderedColumns = useMemo(() => {
@@ -647,43 +649,22 @@ export default function ScreeningBoard() {
   const openCard = (card) => {
     setSelectedId(card.id);
     setSelectedSnapshot(card);
-    setPendingTransition(null);
+    setPendingAction(null);
     setComment("");
     setReasonCode("");
   };
 
-  const requestTransition = () => {
-    const note = comment.trim();
-    if (!pendingTransition) return;
-    const needsReason = COMMENT_REQUIRED_STATES.has(pendingTransition);
-    if (needsReason && !note) {
-      toast({
-        variant: "destructive",
-        title: "A comment is required",
-        description: `Add a reason before moving this opportunity to ${stateMeta(pendingTransition).label}.`,
-      });
-      return;
-    }
-    if (needsReason && !reasonCode) {
-      toast({
-        variant: "destructive",
-        title: "A reason code is required",
-        description: `Choose the reason this opportunity is being moved to ${stateMeta(pendingTransition).label}.`,
-      });
-      return;
-    }
-    transitionMutation.mutate({
-      id: selectedId,
-      state: pendingTransition,
-      note: note || undefined,
-      code: needsReason ? reasonCode : undefined,
-      text: needsReason ? note || undefined : undefined,
-    });
+  const openAction = (action) => {
+    setComment("");
+    setReasonCode("");
+    setQuestionSubject("");
+    setQuestionDue("");
+    setPendingAction(action);
   };
 
-  const commentRequired = pendingTransition ? COMMENT_REQUIRED_STATES.has(pendingTransition) : false;
-  // The enabled reason codes for the pending state's decision class (W6-01).
-  const pendingDecisionClass = pendingTransition ? STATE_DECISION_CLASS[pendingTransition] : null;
+  const needs = actionNeeds(pendingAction);
+  const pendingDecisionClass = pendingAction?.reason_class || null;
+  // The enabled reason codes for the pending action's decision class (W6-01).
   const pendingReasonOptions =
     (pendingDecisionClass && decisionReasonsQuery.data?.options?.[pendingDecisionClass]) || [];
   const pendingReasonNeedsText =
@@ -691,6 +672,25 @@ export default function ScreeningBoard() {
       (decisionReasonsQuery.data?.config?.classes || []).find((c) => c.key === pendingDecisionClass)
         ?.require_text) ||
     false;
+  const pendingIncomplete =
+    (needs.reason && !reasonCode) ||
+    (needs.comment && !comment.trim()) ||
+    (needs.question && (!questionSubject.trim() || !comment.trim()));
+
+  const requestTransition = () => {
+    if (!pendingAction || pendingIncomplete) return;
+    const note = comment.trim();
+    transitionMutation.mutate({
+      id: selectedId,
+      state: pendingAction.to,
+      note: needs.question ? undefined : note || undefined,
+      code: needs.reason ? reasonCode : undefined,
+      text: needs.reason ? note || undefined : undefined,
+      question: needs.question
+        ? { subject: questionSubject.trim(), body: note, due_at: questionDue || undefined }
+        : undefined,
+    });
+  };
 
   const renderDetail = () => {
     if (!selectedCard) return null;
@@ -1770,7 +1770,7 @@ export default function ScreeningBoard() {
                   Accountable: {selectedCard.gate1_authority.accountable_party?.label || "Unassigned"}.{" "}
                   {selectedCard.gate1_authority.authorized
                     ? "Your role may take the screening decision."
-                    : "Only the delegated roles may move this item to refinement or decline it."}
+                    : "Only the delegated roles may take the Gate-1 decision (proceed, hold or decline)."}
                 </span>
               </div>
             )}
@@ -1787,44 +1787,50 @@ export default function ScreeningBoard() {
                 </span>
               </div>
             )}
-            {statesQuery.isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading the state machine...
-              </div>
-            ) : allowedNextStates.length === 0 ? (
+            {availableActions.length === 0 ? (
               <p className="text-sm text-slate-500">
-                No further transitions are available from {selectedCard.state_label || meta.label}.
+                {selectedCard.is_final
+                  ? `${selectedCard.state_label || meta.label} is a final outcome; no further moves.`
+                  : selectedCard.next_actor === "subsidiary"
+                    ? "Waiting on the subsidiary."
+                    : `No actions for you on ${selectedCard.state_label || meta.label}.`}
               </p>
             ) : (
-              <div className="flex flex-wrap gap-2">
-                {allowedNextStates.map((state) => {
-                  const target = stateMeta(state);
-                  const isBusy = transitionMutation.isPending && pendingTransition === state;
-                  return (
-                    <Button
-                      key={state}
-                      variant="outline"
-                      size="sm"
-                      className="gap-2"
-                      disabled={transitionMutation.isPending || gate1Blocked(state) || rpBlocked(state)}
-                      title={
-                        rpBlocked(state)
-                          ? "The related-party overlay blocks this decision until an independent sign-off is recorded."
-                          : gate1Blocked(state)
-                            ? selectedCard.gate1_authority.reason
-                            : undefined
-                      }
-                      data-testid={"transition-" + state}
-                      onClick={() => {
-                        setComment("");
-                        setPendingTransition(state);
-                      }}
-                    >
-                      {isBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                      {target.label}
-                    </Button>
-                  );
-                })}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {availableActions.map((action) => {
+                    const isBusy = transitionMutation.isPending && pendingAction?.action === action.action;
+                    const tone =
+                      action.action === "decline" || action.action === "withdraw"
+                        ? "border-red-200 text-red-700 hover:bg-red-50"
+                        : action.action === "proceed"
+                          ? "border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                          : "";
+                    return (
+                      <Button
+                        key={action.action + action.to}
+                        variant="outline"
+                        size="sm"
+                        className={cn("gap-2", tone)}
+                        disabled={transitionMutation.isPending || !action.allowed}
+                        title={action.allowed ? undefined : action.blocked_reason || undefined}
+                        data-testid={"action-" + action.action}
+                        onClick={() => openAction(action)}
+                      >
+                        {isBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        {action.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+                {availableActions
+                  .filter((a) => !a.allowed && a.blocked_reason)
+                  .slice(0, 1)
+                  .map((a) => (
+                    <p key="blocked" className="text-xs text-slate-500" data-testid="action-blocked-reason">
+                      {a.blocked_reason}
+                    </p>
+                  ))}
               </div>
             )}
           </div>
@@ -2119,23 +2125,55 @@ export default function ScreeningBoard() {
         }}
       />
 
-      <Dialog open={Boolean(pendingTransition)} onOpenChange={(open) => !open && setPendingTransition(null)}>
+      <Dialog
+        open={Boolean(pendingAction)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingAction(null);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {t("board.moveTo")} {pendingTransition ? stateMeta(pendingTransition).label : ""}
-            </DialogTitle>
+            <DialogTitle>{pendingAction?.label || ""}</DialogTitle>
             <DialogDescription>
-              {commentRequired
-                ? "A reason code and comment are required for this move — they are recorded on the audit trail and shown to the owner."
-                : "Add an optional comment for the audit trail."}
+              {needs.question
+                ? "The question opens a tracked thread with the subsidiary. The opportunity unlocks for edits until they respond."
+                : needs.reason
+                  ? "A reason code and comment are required. Both are recorded on the audit trail and shown to the owner."
+                  : needs.comment
+                    ? "Add a comment explaining why the review resumes."
+                    : "Add an optional comment for the audit trail."}
             </DialogDescription>
           </DialogHeader>
-          {commentRequired && (
+          {needs.question && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium" htmlFor="question-subject">Subject</Label>
+                <Input
+                  id="question-subject"
+                  data-testid="question-subject"
+                  value={questionSubject}
+                  onChange={(event) => setQuestionSubject(event.target.value)}
+                  placeholder="e.g. Funding split and lender terms"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm font-medium" htmlFor="question-due">Response due (optional)</Label>
+                <Input
+                  id="question-due"
+                  type="date"
+                  data-testid="question-due"
+                  value={questionDue}
+                  onChange={(event) => setQuestionDue(event.target.value)}
+                />
+                <p className="text-xs text-slate-500">Defaults to the Information Requested SLA when left blank.</p>
+              </div>
+            </div>
+          )}
+          {needs.reason && (
             <div className="space-y-2">
-              <Label className="text-sm font-medium">
-                Reason code{pendingReasonNeedsText ? "" : " (required)"}
-              </Label>
+              <Label className="text-sm font-medium">Reason code</Label>
               <Select value={reasonCode} onValueChange={setReasonCode}>
                 <SelectTrigger data-testid="transition-reason-code">
                   <SelectValue placeholder="Choose a reason code..." />
@@ -2160,36 +2198,51 @@ export default function ScreeningBoard() {
             value={comment}
             onChange={(event) => setComment(event.target.value)}
             placeholder={
-              commentRequired
-                ? pendingReasonNeedsText
-                  ? "Detail required for this reason code..."
-                  : "Add detail for this decision..."
-                : "Optional note..."
+              needs.question
+                ? "The question for the subsidiary..."
+                : needs.reason
+                  ? pendingReasonNeedsText
+                    ? "Detail required for this reason code..."
+                    : "Add detail for this decision..."
+                  : needs.comment
+                    ? "Why the review resumes..."
+                    : "Optional note..."
             }
             rows={4}
           />
-          {commentRequired && (!comment.trim() || !reasonCode) && (
+          {pendingIncomplete && (
             <p className="text-xs text-red-600">
-              {!reasonCode
-                ? "Choose a reason code to move this opportunity here."
-                : "A comment is required to move this opportunity here."}
+              {needs.reason && !reasonCode
+                ? "Choose a reason code."
+                : needs.question && !questionSubject.trim()
+                  ? "Add a subject for the question."
+                  : needs.question
+                    ? "Write the question."
+                    : "A comment is required."}
             </p>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingTransition(null)} disabled={transitionMutation.isPending}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingAction(null);
+              }}
+              disabled={transitionMutation.isPending}
+            >
               {t("common.cancel")}
             </Button>
             <Button
               className="gap-2 bg-teal-600 hover:bg-teal-700"
               onClick={requestTransition}
-              disabled={transitionMutation.isPending || (commentRequired && (!comment.trim() || !reasonCode))}
+              disabled={transitionMutation.isPending || pendingIncomplete}
+              data-testid="transition-confirm"
             >
               {transitionMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <ArrowRight className="h-4 w-4" />
               )}
-              {t("board.confirmMove")}
+              {pendingAction?.label || t("board.confirmMove")}
             </Button>
           </DialogFooter>
         </DialogContent>

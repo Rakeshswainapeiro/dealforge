@@ -15,11 +15,11 @@ import { resolveActor } from './users.js';
 import { canConfigure, canWriteOrg } from './rbac.js';
 import { writeAudit } from './audit.js';
 import { createRecord } from './entities.js';
-import { transition } from './pipeline.js';
+import { systemSubmit } from './lifecycle.js';
 import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
 import { readXlsx } from './xlsxRead.js';
 import {
-  BULK_IMPORT_VERSION, IMPORT_POLICY, IMPORT_COLUMNS, IMPORT_STATES,
+  BULK_IMPORT_VERSION, IMPORT_POLICY, IMPORT_COLUMNS, IMPORT_STATES, importState,
   BULK_IMPORT_MESSAGES, parseCsv, rowsFromMatrix, buildValidationReport, importTemplateCsv,
 } from './config/bulkImport.js';
 import { INTAKE_FIELD_KEYS } from './config/intakeConfig.js';
@@ -150,10 +150,9 @@ async function createImportRecord(row, actor) {
   }
 
   const record = await createRecord(OPPORTUNITY_ENTITY, data, { actor });
-  const target = IMPORT_STATES.includes(row.state) ? row.state : 'draft';
-  if (target !== 'draft') {
-    await transition(record.id, 'submission', { actor, comment: 'Loaded from the bulk import (INTG-03).' });
-    if (target === 'screening') await transition(record.id, 'screening', { actor, comment: 'Loaded from the bulk import (INTG-03).' });
+  const target = IMPORT_STATES.includes(importState(row.state)) ? importState(row.state) : 'draft';
+  if (target === 'screening_review') {
+    await systemSubmit(record.id, actor, { comment: 'Loaded from the bulk import (INTG-03).' });
   }
   const { rows } = await pool.query('SELECT data FROM entity_record WHERE entity = $1 AND id = $2', [OPPORTUNITY_ENTITY, record.id]);
   return { ...record, status: rows[0]?.data?.status || 'draft' };

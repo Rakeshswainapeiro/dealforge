@@ -4,6 +4,7 @@ import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
 import { canViewOrg } from './rbac.js';
+import { isProducerFor } from './config/workflowStates.js';
 import { notify } from './notify.js';
 import { loadCommentVisibilityConfig } from './commentVisibility.js';
 import {
@@ -45,13 +46,28 @@ export async function loadOpportunity(id, actor) {
   return row;
 }
 
+// The status a person reads (WF-04): open, answered or closed. 'answered'
+// means the formal response is in but the asker has not closed the thread.
+export function threadDisplayStatus(row, now = new Date()) {
+  if (!row) return null;
+  if (row.status !== 'open') return 'closed';
+  return row.response_received ? 'answered' : 'open';
+}
+
+export function isThreadOverdue(row, now = new Date()) {
+  return Boolean(row && row.status === 'open' && !row.response_received && row.due_at && new Date(row.due_at) < now);
+}
+
 function toThread(row) {
   if (!row) return null;
   return {
     ...row,
+    kind: row.kind || 'question',
     is_open: row.status === 'open',
     awaiting_response: row.requires_response && !row.response_received,
     visibility: row.visibility || 'shared',
+    display_status: threadDisplayStatus(row),
+    overdue: isThreadOverdue(row),
   };
 }
 
@@ -130,6 +146,60 @@ async function resolveParticipants(candidates = [], { actor, ownerOrgId } = {}) 
   return out;
 }
 
+// Insert a thread, its first message and its participants through `db` (the
+// pool, or a client inside the caller's transaction). Validation, audit and
+// notification stay with the callers so a transactional caller can audit in the
+// same transaction and notify only after it commits.
+export async function insertThread(db, opp, {
+  subject, body, requiresResponse = false, visibility = 'shared', participants = [],
+  kind = 'question', dueAt = null, ownerEmail = null,
+}, actor) {
+  const id = uuid();
+  const { rows } = await db.query(
+    "INSERT INTO qa_thread (id, opportunity_id, owner_org_id, subject, status, requires_response, raised_by, raised_by_name, visibility, kind, due_at, owner_email) " +
+      "VALUES ($1,$2,$3,$4,'open',$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+    [id, opp.id, opp.owner_org_id, subject, requiresResponse, actor.email, actor.full_name || null, visibility,
+      kind, dueAt, ownerEmail]
+  );
+  await db.query(
+    "INSERT INTO qa_message (id, thread_id, author_email, author_name, author_id, body, is_response, visibility) " +
+      "VALUES ($1,$2,$3,$4,$5,$6,false,$7)",
+    [uuid(), id, actor.email, actor.full_name || null, actor.id, body, visibility]
+  );
+  // The raiser is always a participant; explicit participants are added on top.
+  const candidates = [actor.email, ...(participants || [])];
+  const people = await resolveParticipants(candidates, { actor, ownerOrgId: opp.owner_org_id });
+  for (const person of people) {
+    await db.query(
+      "INSERT INTO qa_participant (id, thread_id, user_email, role, notified_at) " +
+        "VALUES ($1,$2,$3,$4, now()) ON CONFLICT (thread_id, user_email) DO NOTHING",
+      [uuid(), id, person.user_email, person.user_id === actor.id ? 'raiser' : 'participant']
+    );
+  }
+  return { thread: rows[0], people };
+}
+
+// Notify a new thread's participants (never the raiser; never an internal
+// thread to a subsidiary role).
+export async function notifyThreadOpened({ thread, people, opp, actor }) {
+  const config = await loadCommentVisibilityConfig();
+  const recipients = await recipientsWhoMaySee(
+    config,
+    people.map((p) => p.user_email).filter((e) => e !== actor.email),
+    thread.visibility || 'shared'
+  );
+  const isRequest = thread.kind === 'information_request';
+  await notify({
+    to: recipients,
+    kind: isRequest ? 'information_requested' : 'qa_thread',
+    subject: (isRequest ? 'Information requested: ' : 'Question raised: ') + thread.subject,
+    body: (actor.full_name || actor.email) + (isRequest ? ' requested information' : ' opened a thread')
+      + (thread.requires_response ? ' requiring a response' : '') + ' on ' + (opp.data?.opportunity_name || opp.id)
+      + (thread.due_at ? ' (due ' + new Date(thread.due_at).toISOString().slice(0, 10) + ')' : '') + '.',
+    entity: OPPORTUNITY_ENTITY, entityId: opp.id, orgId: opp.owner_org_id, actor,
+  });
+}
+
 export async function openThread(opportunityId, payload = {}, { actor } = {}) {
   const opp = await loadOpportunity(opportunityId, actor);
   const subject = (payload.subject || '').trim();
@@ -144,42 +214,23 @@ export async function openThread(opportunityId, payload = {}, { actor } = {}) {
   if (visibility === 'internal' && isSubsidiaryViewer(config, actor)) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
-  const id = uuid();
-  const { rows } = await pool.query(
-    "INSERT INTO qa_thread (id, opportunity_id, owner_org_id, subject, status, requires_response, raised_by, raised_by_name, visibility) " +
-      "VALUES ($1,$2,$3,$4,'open',$5,$6,$7,$8) RETURNING *",
-    [id, opp.id, opp.owner_org_id, subject, requiresResponse, actor.email, actor.full_name || null, visibility]
-  );
-  await pool.query(
-    "INSERT INTO qa_message (id, thread_id, author_email, author_name, author_id, body, is_response, visibility) " +
-      "VALUES ($1,$2,$3,$4,$5,$6,false,$7)",
-    [uuid(), id, actor.email, actor.full_name || null, actor.id, body, visibility]
-  );
-  // The raiser is always a participant; explicit participants are added on top.
-  const candidates = [actor.email, ...(payload.participants || [])];
-  const people = await resolveParticipants(candidates, { actor, ownerOrgId: opp.owner_org_id });
-  for (const person of people) {
-    await pool.query(
-      "INSERT INTO qa_participant (id, thread_id, user_email, role, notified_at) " +
-        "VALUES ($1,$2,$3,$4, now()) ON CONFLICT (thread_id, user_email) DO NOTHING",
-      [uuid(), id, person.user_email, person.user_id === actor.id ? 'raiser' : 'participant']
-    );
-  }
-  await writeAudit({ entity: 'qa_thread', entityId: id, action: 'thread_open', actor, orgId: opp.owner_org_id, after: { subject, requires_response: requiresResponse, visibility } });
-  await writeAudit({ entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'qa_thread_open', actor, orgId: opp.owner_org_id, after: { thread_id: id, subject, visibility } });
-  const recipients = await recipientsWhoMaySee(
-    config,
-    people.map((p) => p.user_email).filter((e) => e !== actor.email),
-    visibility
-  );
-  await notify({
-    to: recipients,
-    kind: 'qa_thread',
-    subject: 'Question raised: ' + subject,
-    body: (actor.full_name || actor.email) + ' opened a thread' + (requiresResponse ? ' requiring a response' : '') + ' on ' + (opp.data?.opportunity_name || opp.id) + '.',
-    entity: OPPORTUNITY_ENTITY, entityId: opp.id, orgId: opp.owner_org_id, actor,
-  });
-  return toThread(rows[0]);
+  const dueAt = parseDueDate(payload.due_at ?? payload.due_date);
+  const { thread, people } = await insertThread(pool, opp, {
+    subject, body, requiresResponse, visibility, participants: payload.participants || [],
+    kind: 'question', dueAt, ownerEmail: payload.owner_email ? String(payload.owner_email).trim().toLowerCase() : null,
+  }, actor);
+  await writeAudit({ entity: 'qa_thread', entityId: thread.id, action: 'thread_open', actor, orgId: opp.owner_org_id, after: { subject, requires_response: requiresResponse, visibility, due_at: dueAt } });
+  await writeAudit({ entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'qa_thread_open', actor, orgId: opp.owner_org_id, after: { thread_id: thread.id, subject, visibility } });
+  await notifyThreadOpened({ thread, people, opp, actor });
+  return toThread(thread);
+}
+
+// A due date is optional; when given it must be a real date.
+export function parseDueDate(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) { const e = new Error('The due date is not a valid date'); e.status = 400; throw e; }
+  return d.toISOString();
 }
 
 export async function addMessage(threadId, payload = {}, { actor } = {}) {
@@ -210,8 +261,15 @@ export async function addMessage(threadId, payload = {}, { actor } = {}) {
     [uuid(), threadId, actor.email, actor.full_name || null, actor.id, body, isResponse, visibility]
   );
   await pool.query('UPDATE qa_thread SET updated_at = now() WHERE id = $1', [threadId]);
-  if (isResponse && thread.requires_response && !thread.response_received) {
-    await pool.query("UPDATE qa_thread SET response_received = true, updated_at = now() WHERE id = $1", [threadId]);
+  // A formal information request is answered only by the owning subsidiary;
+  // anyone else's "response" is an ordinary message on it.
+  const countsAsAnswer = isResponse && thread.requires_response && !thread.response_received
+    && (thread.kind !== 'information_request' || isProducerFor(actor, thread.owner_org_id));
+  if (countsAsAnswer) {
+    await pool.query(
+      "UPDATE qa_thread SET response_received = true, answered_at = now(), answered_by = $2, updated_at = now() WHERE id = $1",
+      [threadId, actor.email]
+    );
   }
   await pool.query(
     "INSERT INTO qa_participant (id, thread_id, user_email, role, notified_at) " +
@@ -272,7 +330,10 @@ export async function listThreads(opportunityId, { status, awaitingResponse, act
   if (awaitingResponse) where.push('t.requires_response = true AND t.response_received = false');
   const { rows } = await pool.query(
     'SELECT t.*, (SELECT count(*)::int FROM qa_message m WHERE m.thread_id = t.id) AS message_count, ' +
-      '(SELECT count(*)::int FROM qa_participant p WHERE p.thread_id = t.id) AS participant_count ' +
+      '(SELECT count(*)::int FROM qa_participant p WHERE p.thread_id = t.id) AS participant_count, ' +
+      // The opening question, so a list can show what was asked without a
+      // second request. Never an internal message.
+      "(SELECT m.body FROM qa_message m WHERE m.thread_id = t.id AND COALESCE(m.visibility, 'shared') <> 'internal' ORDER BY m.created_at ASC LIMIT 1) AS first_message " +
       'FROM qa_thread t WHERE ' + where.join(' AND ') + ' ORDER BY t.updated_at DESC',
     params
   );

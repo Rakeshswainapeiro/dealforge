@@ -24,10 +24,14 @@ export const DECISION_REASON_OWNER = 'Sirius Investment Team';
 // The decision classes a reason can attach to. `decision_state` links a class
 // to the pipeline state that raises it, so the board can show the right codes.
 export const DECISION_CLASSES = [
+  { key: 'proceed', label: 'Proceed to Gate 2', action: 'proceed', decision_state: 'proceed_to_gate2',
+    description: 'The Gate-1 screening decision is to proceed to the Gate 2 quantitative screen.' },
+  { key: 'hold', label: 'On hold', action: 'hold', decision_state: 'on_hold',
+    description: 'The screening decision is deferred; the opportunity is parked with a reason.' },
   { key: 'approve', label: 'Approve', action: 'approve', decision_state: null,
-    description: 'A gate or stage is being completed in favour of the opportunity.' },
-  { key: 'return', label: 'Return for revision', action: 'return', decision_state: 'returned',
-    description: 'The item goes back to its producing layer with instructions.' },
+    description: 'A route stage is being completed in favour of the opportunity (Phase 2 sign-off route).' },
+  { key: 'return', label: 'Return for revision', action: 'return', decision_state: null,
+    description: 'A route stage goes back to its producing layer with instructions (Phase 2 sign-off route).' },
   { key: 'decline', label: 'Decline', action: 'decline', decision_state: 'declined',
     description: 'The opportunity is stopped. Declines are grouped for comparables.' },
   { key: 'withdraw', label: 'Withdraw', action: 'withdraw', decision_state: 'withdrawn',
@@ -39,6 +43,28 @@ export const DECISION_CLASS_KEYS = DECISION_CLASSES.map((c) => c.key);
 // `counts_as_decline` marks the codes that feed decline comparables: a reviewer
 // reading the pattern of lost deals sees them grouped by a stable key.
 export const DECISION_REASONS = [
+  // Proceed to Gate 2 (BRD v2 WF-05) ----------------------------------------
+  { class: 'proceed', id: 'clears_gate1', label: 'Clears every Gate 1 check', counts_as_decline: false,
+    description: 'Eligibility, hard filters, hurdles and alignment are clear or resolved.' },
+  { class: 'proceed', id: 'strategic_fit', label: 'Strong strategic fit', counts_as_decline: false,
+    description: 'The opportunity advances the group and entity strategy.' },
+  { class: 'proceed', id: 'returns_above_hurdle', label: 'Returns above hurdle', counts_as_decline: false,
+    description: 'Projected returns clear the hurdles across the scenarios.' },
+  { class: 'proceed', id: 'flags_resolved', label: 'Flags resolved in review', counts_as_decline: false,
+    description: 'Flagged checks were resolved through the review or the Q&A.' },
+  { class: 'proceed', id: 'override_with_memo', label: 'Proceed by override', counts_as_decline: false,
+    description: 'Proceeds despite an open flag, with the override reasoning recorded.' },
+
+  // On hold ----------------------------------------------------------------
+  { class: 'hold', id: 'awaiting_external_input', label: 'Awaiting external input', counts_as_decline: false,
+    description: 'A third party (advisor, counterparty, regulator) must respond first.' },
+  { class: 'hold', id: 'capital_timing', label: 'Capital timing', counts_as_decline: false,
+    description: 'Capital is not available in the current period.' },
+  { class: 'hold', id: 'strategy_review', label: 'Pending strategy review', counts_as_decline: false,
+    description: 'The entity or group strategy is being reviewed.' },
+  { class: 'hold', id: 'counterparty_timing', label: 'Counterparty timing', counts_as_decline: false,
+    description: 'The counterparty process or timetable has paused.' },
+
   // Approve ---------------------------------------------------------------
   { class: 'approve', id: 'strategic_fit', label: 'Strong strategic fit', counts_as_decline: false,
     description: 'The opportunity advances the group strategy.' },

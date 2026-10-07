@@ -117,9 +117,12 @@ export function buildWeeklyRows(cards, { config, subsidiaryNames = {} } = {}) {
 }
 
 function decisionText(card) {
-  if (card.state === 'declined') return card.declined_reason || 'Declined';
-  if (card.state === 'returned') return card.returned_reason || 'Returned for rework';
-  if (card.state === 'withdrawn') return card.withdrawn_reason || 'Withdrawn';
+  const label = card.decision_reason_label ? card.decision_reason_label + (card.decision_reason_text ? ': ' : '') : '';
+  if (card.state === 'declined') return label + (card.declined_reason || card.decision_reason_text || '') || 'Declined';
+  if (card.state === 'withdrawn') return label + (card.withdrawn_reason || card.decision_reason_text || '') || 'Withdrawn';
+  if (card.state === 'on_hold') return label + (card.hold_reason || card.decision_reason_text || '') || 'On hold';
+  if (card.state === 'proceed_to_gate2') return label + (card.decision_reason_text || '') || 'Proceed to Gate 2';
+  if (card.state === 'information_requested') return 'Information requested' + (card.info_request_due_at ? ' (due ' + String(card.info_request_due_at).slice(0, 10) + ')' : '');
   return '';
 }
 

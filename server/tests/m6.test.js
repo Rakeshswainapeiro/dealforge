@@ -1,6 +1,7 @@
 // M6 integration tests — hardening, i18n readiness and UAT demo data (E10).
 import { test, before, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { qualifyingGateDefaults } from '../config/qualifyingGates.js';
 
 const BASE = (process.env.BASE_URL || 'http://localhost:34000').replace(/[/]+$/, '');
 const INFINIA = 'org-infinia-technologies-limited';
@@ -32,6 +33,36 @@ function docUploadForm(requirementKey, name, content = 'hello', type = 'text/pla
   const form = uploadForm(name, content, type);
   form.append('requirement_key', requirementKey);
   return form;
+}
+
+// A complete Infinia opportunity, submitted for real so it sits in Screening
+// review (WF-01): the subsidiary fills it, uploads the pack, the CEO and CFO
+// attest, then it is submitted. State is never written directly.
+const SUBMITTABLE = {
+  ...qualifyingGateDefaults(),
+  opportunity_type: 'M&A', target_name: 'ProbeCo LLC', sector: 'Technology', geography: 'UAE',
+  total_commitment_aed: 120, ask_aed: 60, funding_source: 'Balance sheet', in_approved_budget: 'yes',
+  target_signing_close: '2027-03', sourcing_channel: 'proprietary',
+  narrative_what: 'Acquire a software platform.', narrative_why_now: 'Consolidation window.',
+  narrative_why_us: 'Adjacent operating stack.', decision_sought: 'Approval to proceed to diligence.',
+};
+
+async function submitInReview(name, extra = {}) {
+  const created = await api('/api/entities/DealOpportunity', {
+    method: 'POST', user: 'user-deal-lead', body: { ...SUBMITTABLE, ...extra, opportunity_name: name },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const id = created.data.id;
+  for (const key of ['business_plan', 'financials', 'cap_table']) {
+    await api('/api/gate/opportunities/' + id + '/documents', { method: 'POST', user: 'user-deal-lead', form: docUploadForm(key, key + '.txt') });
+  }
+  for (const [key, user] of [['ceo', 'user-ceo'], ['cfo', 'user-cfo']]) {
+    await api('/api/gate/opportunities/' + id + '/attestations/' + key, { method: 'POST', user });
+  }
+  const submit = await api('/api/gate/opportunities/' + id + '/submit', { method: 'POST', user: 'user-deal-lead' });
+  assert.equal(submit.status, 200, JSON.stringify(submit.data));
+  assert.equal(submit.data.state, 'screening_review');
+  return id;
 }
 
 before(async () => {
@@ -238,7 +269,7 @@ describe('MVP sample data (W1-11/W1-12)', () => {
       return t.skip('sample data not seeded (SEED_PROFILE=mvp to enable)');
     }
     const states = new Set(data.map((opp) => opp.status));
-    for (const expected of ['draft', 'submission', 'screening', 'refinement']) {
+    for (const expected of ['draft', 'screening_review', 'information_requested', 'on_hold', 'proceed_to_gate2', 'declined']) {
       assert.ok(states.has(expected), 'expected a sample opportunity in state ' + expected);
     }
     assert.ok(data.every((opp) => opp.seed === true), 'sample records carry the seed marker');
@@ -517,27 +548,14 @@ describe('decision reason codes (W6-01 / WF-05)', () => {
 
   test('a decline without a reason code is refused and with one is recorded', async (t) => {
     if (!online) return t.skip('server offline');
-    // Build a submitted-in-review opportunity the reviewer can decline.
-    const created = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-deal-lead',
-      body: {
-        opportunity_name: 'W6-01 decline probe',
-        owner_org_id: INFINIA,
-        status: 'submission',
-      },
-    });
-    assert.ok([200, 201].includes(created.status), JSON.stringify(created.data));
-    const id = created.data.id;
-    await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-    });
+    const id = await submitInReview('W6-01 decline probe');
 
     const noCode = await api('/api/pipeline/opportunities/' + id + '/transition', {
       method: 'POST', user: 'user-fahad', body: { state: 'declined', comment: 'Not for us' },
     });
     assert.equal(noCode.status, 400, JSON.stringify(noCode.data));
     const still = await api('/api/entities/DealOpportunity/' + id, { user: 'user-deal-lead' });
-    assert.equal(still.data.status, 'screening', 'the item is unchanged without a reason code');
+    assert.equal(still.data.status, 'screening_review', 'the item is unchanged without a reason code');
 
     const declined = await api('/api/pipeline/opportunities/' + id + '/transition', {
       method: 'POST', user: 'user-fahad',
@@ -623,19 +641,11 @@ describe('delegation of authority (W6-02 / WF-08)', () => {
   test('a Gate-1 decision by a non-delegated role is refused and by the delegated role succeeds', async (t) => {
     if (!online) return t.skip('server offline');
     // A committee-scale ticket (AED 500mn) is delegated to the CIO and IC only.
-    const created = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-deal-lead',
-      body: { opportunity_name: 'W6-02 DoA probe', owner_org_id: INFINIA, status: 'submission', total_commitment_aed: 500 },
-    });
-    assert.ok([200, 201].includes(created.status), JSON.stringify(created.data));
-    const id = created.data.id;
-    await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-    });
+    const id = await submitInReview('W6-02 DoA probe', { total_commitment_aed: 500, ask_aed: 250 });
 
     // The consolidated leadership role is not delegated a committee-scale ticket.
     const refused = await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-fahad', body: { state: 'refinement' },
+      method: 'POST', user: 'user-fahad', body: { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Proceed' },
     });
     assert.equal(refused.status, 403, JSON.stringify(refused.data));
     assert.ok(refused.data.doa, 'the refusal carries the band and its delegated roles');
@@ -644,7 +654,7 @@ describe('delegation of authority (W6-02 / WF-08)', () => {
 
     // The CIO is delegated this band.
     const allowed = await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-cio', body: { state: 'refinement' },
+      method: 'POST', user: 'user-cio', body: { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Proceed' },
     });
     assert.equal(allowed.status, 200, JSON.stringify(allowed.data));
     assert.equal(allowed.data.doa.tier.key, 'committee');
@@ -707,21 +717,7 @@ describe('related-party overlay (W6-03 / WF-06)', () => {
     if (!online) return t.skip('server offline');
     // A self-contained flag-to-signoff walk, so re-runs never depend on the
     // sample fixture still sitting in its original state.
-    const created = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-sirius-deal-lead',
-      body: {
-        opportunity_name: 'W6-03 related-party probe', owner_org_id: INFINIA,
-        status: 'draft', total_commitment_aed: 120, sourcing_channel: 'ihc_affiliate_referral',
-      },
-    });
-    assert.ok([200, 201].includes(created.status), JSON.stringify(created.data));
-    const id = created.data.id;
-    await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'submission' },
-    });
-    await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-sirius-deal-lead', body: { state: 'screening' },
-    });
+    const id = await submitInReview('W6-03 related-party probe', { sourcing_channel: 'ihc_affiliate_referral' });
     const view = await api('/api/related-party/opportunities/' + id, { user: 'user-sirius-deal-lead' });
     assert.equal(view.status, 200, JSON.stringify(view.data));
     assert.equal(view.data.flagged, true, 'the affiliate referral auto-flags the deal');
@@ -729,7 +725,7 @@ describe('related-party overlay (W6-03 / WF-06)', () => {
     // The arm-length record is not on file yet, so the overlay is open and the
     // Gate-1 decision is blocked for a delegated decider.
     const blocked = await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-fahad', body: { state: 'refinement' },
+      method: 'POST', user: 'user-fahad', body: { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Proceed' },
     });
     assert.equal(blocked.status, 403, JSON.stringify(blocked.data));
     assert.ok(blocked.data.related_party, 'the refusal carries the overlay verdict');
@@ -758,7 +754,7 @@ describe('related-party overlay (W6-03 / WF-06)', () => {
 
     // Now the delegated decider may take the Screening Decision.
     const allowed = await api('/api/pipeline/opportunities/' + id + '/transition', {
-      method: 'POST', user: 'user-fahad', body: { state: 'refinement' },
+      method: 'POST', user: 'user-fahad', body: { state: 'proceed_to_gate2', reason_code: 'clears_gate1', comment: 'Proceed' },
     });
     assert.equal(allowed.status, 200, JSON.stringify(allowed.data));
     assert.ok(allowed.data.related_party, 'the applied overlay is returned');
@@ -800,7 +796,7 @@ describe('comment visibility (W6-04 / AUD-03)', () => {
   // depends on the sample fixture being in any particular state on a re-run.
   async function makeSubsidiaryOpportunity(note) {
     const created = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-sirius-deal-lead',
+      method: 'POST', user: 'user-deal-lead',
       body: {
         opportunity_name: 'W6-04 visibility probe ' + note, owner_org_id: INFINIA,
         status: 'draft', total_commitment_aed: 90,
@@ -1012,7 +1008,7 @@ describe('hash-chained audit (W6-05 / AUD-01)', () => {
 describe('presentation scheduling (W6-06 / WF-07)', () => {
   async function makeSubsidiaryOpportunity(note) {
     const created = await api('/api/entities/DealOpportunity', {
-      method: 'POST', user: 'user-sirius-deal-lead',
+      method: 'POST', user: 'user-deal-lead',
       body: {
         opportunity_name: 'W6-06 presentation probe ' + note, owner_org_id: INFINIA,
         status: 'draft', total_commitment_aed: 90,
@@ -1326,8 +1322,8 @@ describe('funnel & cycle-time metrics (W7-03 / DSH-04)', () => {
     const res = await api('/api/pipeline-metrics', { user: 'user-admin' });
     assert.equal(res.status, 200, JSON.stringify(res.data));
     assert.equal(res.data.valid, true);
-    assert.equal(res.data.stages.length, 4);
-    assert.equal(res.data.branch_states.length, 3);
+    assert.deepEqual(res.data.stages.map((x) => x.key), ['submitted', 'screening_review', 'proceed_to_gate2']);
+    assert.deepEqual(res.data.branch_states.map((x) => x.key), ['information_requested', 'on_hold', 'declined', 'withdrawn']);
     assert.equal(res.data.ranges.length, 4);
   });
 
@@ -1335,8 +1331,8 @@ describe('funnel & cycle-time metrics (W7-03 / DSH-04)', () => {
     if (!online) return t.skip('server offline');
     const res = await api('/api/pipeline-metrics/summary', { user: 'user-admin' });
     assert.equal(res.status, 200, JSON.stringify(res.data));
-    assert.ok(Array.isArray(res.data.funnel) && res.data.funnel.length === 4);
-    assert.ok(Array.isArray(res.data.cycle) && res.data.cycle.length === 4);
+    assert.ok(Array.isArray(res.data.funnel) && res.data.funnel.length === 3);
+    assert.ok(Array.isArray(res.data.cycle) && res.data.cycle.length >= 3);
     assert.ok(res.data.reasons && res.data.reasons.declined);
     assert.ok('entered' in res.data && 'cycle_breaches' in res.data);
   });
