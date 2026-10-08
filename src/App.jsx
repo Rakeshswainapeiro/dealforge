@@ -5,7 +5,8 @@ import { queryClientInstance } from '@/lib/query-client'
 import VisualEditAgent from '@/lib/VisualEditAgent'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
 import { setupIframeMessaging } from './lib/iframe-messaging';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -58,12 +59,11 @@ const AuthenticatedApp = () => {
   // Render the main app, honouring the feature/menu configuration.
   const activePages = features ? filterPages(Pages, features) : Pages;
   const activeMainPage = mainPageKey && isPageEnabled(features || {}, mainPageKey) ? mainPageKey : Object.keys(activePages)[0];
-  const ActiveMainPage = activeMainPage ? activePages[activeMainPage] : null;
 
   return (
     <LayoutWrapper currentPageName={activeMainPage || mainPageKey}>
       <Routes>
-        <Route path="/" element={ActiveMainPage ? <ActiveMainPage /> : <PageNotFound />} />
+        <Route path="/" element={activeMainPage ? <Navigate to={createPageUrl(activeMainPage)} replace /> : <PageNotFound />} />
         {/* Public verification also resolves for a signed-in scanner. */}
         <Route path="/verify" element={<VerifyMemo />} />
         {Object.entries(activePages).map(([path, Page]) => (

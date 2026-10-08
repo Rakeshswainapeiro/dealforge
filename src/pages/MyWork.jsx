@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/AuthContext";
+import { useTranslation } from "@/lib/i18n";
 import { AlarmClock, ClipboardList, Inbox, Loader2, MessagesSquare, UserCheck } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -15,16 +16,19 @@ import { AlarmClock, ClipboardList, Inbox, Loader2, MessagesSquare, UserCheck } 
 // its SLA. Each row opens the Opportunity 360 screen.
 // ---------------------------------------------------------------------------
 
-function slaText(card) {
+function slaText(card,t) {
   if (!card.sla_due_at) return null;
   const ms = new Date(card.sla_due_at).getTime() - Date.now();
   const hours = Math.round(Math.abs(ms) / 3600000);
-  const span = hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours}h`;
-  return ms < 0 ? `SLA breached ${span} ago` : `SLA due in ${span}`;
+  const span = hours >= 48
+    ? t("mywork.unit.days", { n: Math.round(hours / 24) })
+    : t("mywork.unit.hours", { n: hours });
+  return ms < 0 ? t("mywork.sla.breached", { span }) : t("mywork.sla.dueIn", { span });
 }
 
 function OppRow({ card }) {
-  const sla = slaText(card);
+  const { t } = useTranslation();
+  const sla = slaText(card, t);
   return (
     <a
       href={createPageUrl("Opportunity") + "?id=" + card.id}
@@ -32,13 +36,15 @@ function OppRow({ card }) {
       data-testid={"mywork-opp-" + card.id}
     >
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-slate-900">{card.opportunity_name}</span>
-        <span className="block truncate text-xs text-slate-500">
-          {[card.sector, card.total_commitment_aed != null ? `AED ${card.total_commitment_aed} mn` : null, card.owner_email].filter(Boolean).join(" · ")}
-        </span>
+        <span className="block truncate font-medium text-slate-900"><bdi>{card.opportunity_name}</bdi></span>
+<span className="block truncate text-xs text-slate-500">
+  {[card.sector, card.total_commitment_aed != null ? t("mywork.amount", { n: card.total_commitment_aed }) : null, card.owner_email]
+    .filter(Boolean)
+    .map((part, i) => <span key={i}>{i > 0 && " · "}<bdi>{part}</bdi></span>)}
+</span>
       </span>
       <Badge variant="outline">{card.state_label}</Badge>
-      {card.open_questions > 0 && <Badge variant="outline">{card.open_questions} Q</Badge>}
+      {card.open_questions > 0 && <Badge variant="outline">{t("mywork.badge.questions", { n: card.open_questions })}</Badge>}
       {sla && (
         <Badge variant="outline" className={cn(card.sla_breached ? "bg-red-100 text-red-800 border-red-200" : "bg-white text-slate-600")}>{sla}</Badge>
       )}
@@ -52,7 +58,7 @@ function Block({ icon: Icon, title, description, items, empty, render, testid })
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Icon className="h-4 w-4 text-teal-600" /> {title}
-          <Badge variant="outline" className="ml-1">{items.length}</Badge>
+          <Badge variant="outline" className="ms-1">{items.length}</Badge>
         </CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
@@ -65,6 +71,7 @@ function Block({ icon: Icon, title, description, items, empty, render, testid })
 
 export default function MyWork() {
   const { user } = useAuth();
+const { t, lang } = useTranslation();
   const query = useQuery({ queryKey: ["pipeline", "my-work"], queryFn: () => api.pipeline.myWork(), refetchInterval: 60000 });
   const data = query.data;
 
@@ -76,26 +83,28 @@ export default function MyWork() {
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-teal-600">
               <Inbox className="h-6 w-6 text-white" />
             </div>
-            My Work
-          </h1>
-          <p className="mt-2 text-slate-600">
-            Everything waiting on {user?.full_name || "you"}: owned and routed opportunities, questions to answer and SLA timers.
-          </p>
+            {t("nav.myWork")}
+</h1>
+<p className="mt-2 text-slate-600">
+  {user?.full_name
+    ? t("mywork.subtitle", { name: user.full_name })
+    : t("mywork.subtitleYou")}
+</p>
         </div>
 
         {query.isLoading ? (
-          <p className="flex items-center gap-2 text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading your queue...</p>
+          <p className="flex items-center gap-2 text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> {t("mywork.loading")}</p>
         ) : query.isError ? (
-          <Card className="border-red-200 bg-red-50"><CardContent className="p-4 text-sm text-red-800">{query.error?.message || "Could not load your queue."}</CardContent></Card>
+          <Card className="border-red-200 bg-red-50"><CardContent className="p-4 text-sm text-red-800">{query.error?.message || t("mywork.loadError")}</CardContent></Card>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5" data-testid="mywork-counts">
               {[
-                ["Assigned to me", data.counts.assigned],
-                ["I can act on", data.counts.can_act],
-                ["Questions for me", data.counts.questions],
-                ["Subsidiary to-dos", data.counts.subsidiary],
-                ["SLA due / breached", data.counts.due_soon],
+                [t("mywork.count.assigned"), data.counts.assigned],
+[t("mywork.count.canAct"), data.counts.can_act],
+[t("mywork.count.questions"), data.counts.questions],
+[t("mywork.count.subsidiary"), data.counts.subsidiary],
+[t("mywork.count.dueSoon"), data.counts.due_soon],
               ].map(([label, value]) => (
                 <Card key={label}><CardContent className="pt-5">
                   <p className="text-xs text-slate-500">{label}</p>
@@ -105,31 +114,31 @@ export default function MyWork() {
             </div>
 
             {data.due_soon.length > 0 && (
-              <Block icon={AlarmClock} title="SLA due within a day or breached" items={data.due_soon} empty=""
+              <Block icon={AlarmClock} title={t("mywork.due.title")} items={data.due_soon} empty=""
                 render={(c) => <OppRow key={"due-" + c.id} card={c} />} testid="mywork-due" />
             )}
-            <Block icon={MessagesSquare} title="Questions waiting on me"
-              description="Answer the ones you own; close the ones you asked once they are answered."
-              items={data.questions} empty="No questions are waiting on you." testid="mywork-questions"
-              render={(t) => (
-                <a key={t.id} href={createPageUrl("QandA") + "?thread=" + t.id}
+            <Block icon={MessagesSquare} title={t("mywork.questions.title")}
+              description={t("mywork.questions.desc")}
+              items={data.questions} empty={t("mywork.questions.empty")} testid="mywork-questions"
+              render={(q) => (
+                <a key={q.id} href={createPageUrl("QandA") + "?thread=" + q.id}
                   className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white p-3 hover:border-teal-300">
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-900">{t.subject}</span>
-                    <span className="block truncate text-xs text-slate-500">{t.opportunity_name}</span>
+                    <span className="block truncate font-medium text-slate-900"><bdi>{q.subject}</bdi></span>
+                    <span className="block truncate text-xs text-slate-500"><bdi>{q.opportunity_name}</bdi></span>
                   </span>
-                  {t.kind === "information_request" && <Badge variant="outline">information request</Badge>}
-                  <Badge variant="outline">{t.display_status === "answered" ? "answered - close it" : "to answer"}</Badge>
-                  {t.due_at && <Badge variant="outline" className={cn(t.overdue && "bg-red-100 text-red-800 border-red-200")}>due {new Date(t.due_at).toLocaleDateString()}</Badge>}
+                  {q.kind === "information_request" && <Badge variant="outline">{t("mywork.badge.infoRequest")}</Badge>}
+                  <Badge variant="outline">{q.display_status === "answered" ? t("mywork.badge.answered") : t("mywork.badge.toAnswer")}</Badge>
+                  {q.due_at && <Badge variant="outline" className={cn(q.overdue && "bg-red-100 text-red-800 border-red-200")}>{t("mywork.badge.due", { date: new Date(q.due_at).toLocaleDateString(lang) })}</Badge>}
                 </a>
               )} />
-            <Block icon={UserCheck} title="Owned by or routed to me" description="Opportunities with Sirius where you are the owner or a reviewer."
-              items={data.assigned} empty="Nothing is assigned to you." render={(c) => <OppRow key={"a-" + c.id} card={c} />} testid="mywork-assigned" />
-            <Block icon={ClipboardList} title="Other opportunities I can act on" items={data.can_act}
-              empty="No other opportunities need your action." render={(c) => <OppRow key={"o-" + c.id} card={c} />} testid="mywork-can-act" />
+            <Block icon={UserCheck} title={t("mywork.assigned.title")} description={t("mywork.assigned.desc")}
+              items={data.assigned} empty={t("mywork.assigned.empty")} render={(c) => <OppRow key={"a-" + c.id} card={c} />} testid="mywork-assigned" />
+            <Block icon={ClipboardList} title={t("mywork.canAct.title")} items={data.can_act}
+              empty={t("mywork.canAct.empty")} render={(c) => <OppRow key={"o-" + c.id} card={c} />} testid="mywork-can-act" />
             {(data.subsidiary.length > 0 || !data.assigned.length) && (
-              <Block icon={ClipboardList} title="My subsidiary's drafts and information requests" items={data.subsidiary}
-                empty="No drafts or information requests." render={(c) => <OppRow key={"s-" + c.id} card={c} />} testid="mywork-subsidiary" />
+              <Block icon={ClipboardList} title={t("mywork.subsidiary.title")} items={data.subsidiary}
+                empty={t("mywork.subsidiary.empty")} render={(c) => <OppRow key={"s-" + c.id} card={c} />} testid="mywork-subsidiary" />
             )}
           </>
         )}

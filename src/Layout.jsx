@@ -146,7 +146,7 @@ const navigationItems = [
 // eslint-disable-next-line react/prop-types
 export default function Layout({ children }) {
   const location = useLocation();
-  const { t, lang, setLang, languages } = useTranslation();
+  const { t, lang, dir, setLang, languages, } = useTranslation();
   const { features } = useAuth();
 
   const [currentUser, setCurrentUser] = React.useState(null);
@@ -188,7 +188,7 @@ export default function Layout({ children }) {
         }
       `}</style>
       <div className="min-h-screen flex w-full bg-slate-50">
-        <Sidebar className="border-r-2 border-slate-200 bg-white shadow-sm">
+        <Sidebar side={dir === "rtl" ? "right" : "left"} className="border-e-2 border-slate-200 bg-white shadow-sm">
           <SidebarHeader className="border-b-2 border-slate-100 p-6 bg-gradient-to-br from-slate-50 to-white">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl flex items-center justify-center shadow-md">
@@ -216,8 +216,8 @@ export default function Layout({ children }) {
                             className={`
                               transition-all duration-200 rounded-lg px-4 py-3
                               ${isActive 
-                                ? 'bg-teal-50 text-teal-700 font-semibold border-l-4 border-teal-600 shadow-sm' 
-                                : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 border-l-4 border-transparent'
+                                ? 'bg-teal-50 text-teal-700 font-semibold border-s-4 border-teal-600 shadow-sm' 
+                                : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900 border-s-4 border-transparent'
                               }
                             `}
                           >
@@ -269,7 +269,7 @@ export default function Layout({ children }) {
             ) : (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-200 shadow-sm hover:shadow-md transition-all w-full text-left">
+                  <button className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-200 shadow-sm hover:shadow-md transition-all w-full text-start">
                     <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-teal-600 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
                       <User className="w-5 h-5 text-white" />
                     </div>
@@ -302,7 +302,7 @@ export default function Layout({ children }) {
                   <DropdownMenuSeparator />
                   {currentUser?.organization && (
                     <DropdownMenuItem disabled>
-                      <Building2 className="w-4 h-4 mr-2" />
+                      <Building2 className="w-4 h-4 me-2" />
                       <div className="flex flex-col">
                         <span className="text-xs text-slate-500">{t("user.organization")}</span>
                         <span className="text-sm font-medium">{currentUser.organization}</span>
@@ -311,7 +311,7 @@ export default function Layout({ children }) {
                   )}
                   {currentUser?.department && (
                     <DropdownMenuItem disabled>
-                      <Users className="w-4 h-4 mr-2" />
+                      <Users className="w-4 h-4 me-2" />
                       <div className="flex flex-col">
                         <span className="text-xs text-slate-500">{t("user.department")}</span>
                         <span className="text-sm font-medium">{currentUser.department}</span>
@@ -337,7 +337,7 @@ export default function Layout({ children }) {
                   )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer">
-                    <LogOut className="w-4 h-4 mr-2" />
+                    <LogOut className="w-4 h-4 me-2" />
                     {t("user.logout")}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
