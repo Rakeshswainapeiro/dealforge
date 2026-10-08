@@ -76,7 +76,8 @@ app.use(cors({
   origin: (origin, cb) => cb(null, isCorsOriginAllowed(origin, CORS_ORIGINS)),
   credentials: true,
 }));
-app.use(express.json({ limit: '25mb' }));
+// Files arrive as multipart uploads; JSON bodies are form data and stay small.
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 // Broad API ceiling; the expensive integration routes add their own tighter
 // limits inside their router (E10.1).
 // Ceiling is env-tunable so the integration suite (which replays many requests

@@ -20,6 +20,11 @@ const ORG_KEY = 'dealforge.org';
 // the server is unreachable.
 let serverAvailable = null;
 
+// The browser-storage fallback is for offline front-end development only
+// (VITE_OFFLINE_FALLBACK=1 under `vite dev`). In a built app a server error is
+// shown to the user; nothing is ever saved only in the browser.
+const OFFLINE_FALLBACK = Boolean(import.meta.env?.DEV) && import.meta.env?.VITE_OFFLINE_FALLBACK === '1';
+
 function orgHeader() {
   try {
     return readRaw(ORG_KEY) || '';
@@ -54,6 +59,7 @@ async function serverFetch(path, options = {}) {
 }
 
 async function checkServer() {
+  if (!OFFLINE_FALLBACK) return true;
   if (serverAvailable !== null) return serverAvailable;
   try {
     await serverFetch('/api/org/me');
@@ -166,7 +172,7 @@ function makeEntityApi(name) {
           const qs = params.toString();
           return await serverFetch(`/api/entities/${name}${qs ? `?${qs}` : ''}`);
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -186,7 +192,7 @@ function makeEntityApi(name) {
           const qs = params.toString();
           return await serverFetch(`/api/entities/${name}${qs ? `?${qs}` : ''}`);
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -201,7 +207,7 @@ function makeEntityApi(name) {
         try {
           return await serverFetch(`/api/entities/${name}/${encodeURIComponent(id)}`);
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -213,7 +219,7 @@ function makeEntityApi(name) {
         try {
           return await serverFetch(`/api/entities/${name}`, { method: 'POST', body: JSON.stringify(data) });
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -235,7 +241,7 @@ function makeEntityApi(name) {
         try {
           return await serverFetch(`/api/entities/${name}`, { method: 'POST', body: JSON.stringify(items) });
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -259,7 +265,7 @@ function makeEntityApi(name) {
             body: JSON.stringify(data),
           });
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
@@ -276,7 +282,7 @@ function makeEntityApi(name) {
         try {
           return await serverFetch(`/api/entities/${name}/${encodeURIComponent(id)}`, { method: 'DELETE' });
         } catch (err) {
-          if (err.status && err.status < 500) throw err;
+          if (!OFFLINE_FALLBACK || (err.status && err.status < 500)) throw err;
           serverAvailable = false;
         }
       }
