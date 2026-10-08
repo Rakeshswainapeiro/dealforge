@@ -13,6 +13,11 @@
 // availability: single-node acceptable). Swap for a shared store at rollout.
 // ---------------------------------------------------------------------------
 
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+  "font-src 'self' data:", "connect-src 'self'", "frame-ancestors 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'",
+].join('; ');
+
 export function securityHeaders() {
   return (req, res, next) => {
     res.removeHeader('X-Powered-By');
@@ -20,6 +25,16 @@ export function securityHeaders() {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    // The SPA loads only its own bundle; inline styles are allowed for the UI
+    // kit, scripts never. A route that sets its own CSP (file downloads) keeps it.
+    if (!res.getHeader('Content-Security-Policy')) {
+      res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+    }
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
     next();
   };
 }

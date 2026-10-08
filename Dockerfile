@@ -24,8 +24,9 @@ RUN npm run build
 FROM base AS runtime
 
 # Install backend (API) dependencies only
-COPY server/package.json ./server/package.json
-RUN cd server && npm install --omit=dev
+# Reproducible install from the lockfile
+COPY server/package.json server/package-lock.json ./server/
+RUN cd server && npm ci --omit=dev
 
 # Copy backend source and the built frontend
 COPY server ./server
@@ -35,8 +36,16 @@ COPY src/data/siriusOrgTree.js ./src/data/siriusOrgTree.js
 # Locale dictionaries are shared with the server i18n endpoint (W8-02 / PLT-06)
 COPY src/lib/i18nMessages.js ./src/lib/i18nMessages.js
 
-# Uploaded files live on a volume
-RUN mkdir -p /app/uploads
+# Uploaded files live on a volume, owned by the unprivileged runtime user.
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+
+ENV UPLOAD_DIR=/app/uploads
+# Run as the image's non-root "node" user (NFR-02).
+USER node
+
+# Liveness for the orchestrator: the unauthenticated health route.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 EXPOSE 3001
 CMD [ "node", "server/index.js" ]

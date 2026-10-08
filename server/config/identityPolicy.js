@@ -93,7 +93,52 @@ export function startupConfigErrors(env = {}) {
   if (!env.PUBLIC_BASE_URL || !/^https:\/\//.test(env.PUBLIC_BASE_URL)) {
     errors.push('PUBLIC_BASE_URL must be set to an https:// URL in production');
   }
+  // Sample data and the seeded cast's shared password never reach production.
+  const profile = String(env.SEED_PROFILE || '').trim().toLowerCase();
+  if (profile === 'mvp' || env.SEED_DEMO_DATA === '1' || env.SEED_DEMO_DATA === 'true') {
+    errors.push('SEED_PROFILE=mvp (sample opportunities and personas) is not allowed in production; use base or off');
+  }
+  if (profile !== 'off') {
+    const pw = env.DEFAULT_USER_PASSWORD || '';
+    if (!pw || PUBLISHED_PASSWORDS.includes(pw) || pw.length < 14) {
+      errors.push('DEFAULT_USER_PASSWORD must be set to a private value of at least 14 characters (or SEED_PROFILE=off) in production');
+    }
+  }
+  if (env.MFA_ENFORCE === '0') {
+    errors.push('MFA_ENFORCE=0 is not allowed in production (PLT-04)');
+  }
+  if (env.TRUST_PROXY === 'true') {
+    errors.push('TRUST_PROXY=true trusts any X-Forwarded-For; set the number of proxy hops (e.g. 1)');
+  }
   return errors;
+}
+
+// The seeded cast's password published in the README and the test suite.
+export const PUBLISHED_PASSWORDS = Object.freeze(['DealForge!2026']);
+
+/**
+ * Which proxies to trust for the client address (rate limits, audit IPs).
+ * TRUST_PROXY: a hop count, 'loopback', a CIDR list, or 'false'. Default: one
+ * hop (the load balancer) in production, loopback elsewhere. Never "true",
+ * which lets any client forge its address.
+ */
+export function trustProxySetting(env = {}) {
+  const v = String(env.TRUST_PROXY ?? '').trim();
+  if (v === 'false' || v === '0') return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  if (v && v !== 'true') return v;
+  return env.NODE_ENV === 'production' ? 1 : 'loopback';
+}
+
+/**
+ * The MFA policy actually enforced (PLT-04). In production a second factor is
+ * always enforced for at least administrators, whatever the stored policy says;
+ * elsewhere the stored policy applies as configured.
+ */
+export function effectiveMfaPolicy(policy = {}, env = {}) {
+  if (env.NODE_ENV !== 'production') return policy;
+  const mode = ['required_admins', 'required_all'].includes(policy.mfa_mode) ? policy.mfa_mode : 'required_admins';
+  return { ...policy, mfa_mode: mode, enforce_mfa: true };
 }
 
 function splitOrigins(value) {

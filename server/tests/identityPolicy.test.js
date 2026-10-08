@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   PUBLIC_API_ROUTES, isPublicApiRoute, headerIdentityEnabled, startupConfigErrors,
   KNOWN_DEFAULT_SECRETS, MIN_SECRET_LENGTH, allowedCorsOrigins, isCorsOriginAllowed,
+  trustProxySetting, effectiveMfaPolicy, PUBLISHED_PASSWORDS,
 } from '../config/identityPolicy.js';
 
 const GOOD_SECRET = 'a'.repeat(MIN_SECRET_LENGTH);
@@ -76,7 +77,7 @@ describe('headerIdentityEnabled', () => {
 });
 
 describe('startupConfigErrors', () => {
-  const prodBase = { NODE_ENV: 'production', BETTER_AUTH_SECRET: GOOD_SECRET, PUBLIC_BASE_URL: 'https://dealforge.example.ae' };
+  const prodBase = { NODE_ENV: 'production', BETTER_AUTH_SECRET: GOOD_SECRET, PUBLIC_BASE_URL: 'https://dealforge.example.ae', DEFAULT_USER_PASSWORD: 'a-private-pass-phrase-123' };
 
   test('a safe production configuration has no errors', () => {
     assert.deepEqual(startupConfigErrors(prodBase), []);
@@ -116,6 +117,16 @@ describe('startupConfigErrors', () => {
     assert.match(startupConfigErrors({ ...prodBase, PUBLIC_BASE_URL: 'http://dealforge.example.ae' }).join(), /https/);
   });
 
+  test('production refuses sample data, the published password and switching MFA off', () => {
+    const errs = (extra) => startupConfigErrors({ ...prodBase, ...extra }).join(' | ');
+    assert.match(errs({ SEED_PROFILE: 'mvp' }), /SEED_PROFILE=mvp/);
+    assert.match(errs({ DEFAULT_USER_PASSWORD: PUBLISHED_PASSWORDS[0] }), /DEFAULT_USER_PASSWORD/);
+    assert.match(errs({ DEFAULT_USER_PASSWORD: '' }), /DEFAULT_USER_PASSWORD/);
+    assert.equal(errs({ DEFAULT_USER_PASSWORD: '', SEED_PROFILE: 'off' }), '', 'no seeded cast, no password needed');
+    assert.match(errs({ MFA_ENFORCE: '0' }), /MFA_ENFORCE/);
+    assert.match(errs({ TRUST_PROXY: 'true' }), /TRUST_PROXY/);
+  });
+
   test('outside production only the secret is checked', () => {
     assert.deepEqual(startupConfigErrors({
       BETTER_AUTH_SECRET: GOOD_SECRET, AUTH_ALLOW_HEADER_IDENTITY: '1', RATE_LIMIT_DISABLED: '1', PUBLIC_BASE_URL: 'http://localhost:34000',
@@ -151,5 +162,23 @@ describe('CORS allow-list', () => {
     assert.equal(isCorsOriginAllowed('https://dealforge.example.ae.evil.com', allowed), false);
     assert.equal(isCorsOriginAllowed(undefined, allowed), true, 'no Origin header = not a cross-origin browser call');
     assert.equal(isCorsOriginAllowed('', allowed), true);
+  });
+});
+
+describe('proxy trust and MFA in production (NFR-02, PLT-04)', () => {
+  test('never trusts every proxy; one hop in production by default', () => {
+    assert.equal(trustProxySetting({ NODE_ENV: 'production' }), 1);
+    assert.equal(trustProxySetting({}), 'loopback');
+    assert.equal(trustProxySetting({ TRUST_PROXY: '2' }), 2);
+    assert.equal(trustProxySetting({ TRUST_PROXY: 'false' }), false);
+    assert.equal(trustProxySetting({ TRUST_PROXY: 'true', NODE_ENV: 'production' }), 1);
+    assert.equal(trustProxySetting({ TRUST_PROXY: '10.0.0.0/8' }), '10.0.0.0/8');
+  });
+  test('production always enforces MFA for at least administrators', () => {
+    const p = effectiveMfaPolicy({ mfa_mode: 'off', enforce_mfa: false }, { NODE_ENV: 'production' });
+    assert.equal(p.enforce_mfa, true);
+    assert.equal(p.mfa_mode, 'required_admins');
+    assert.equal(effectiveMfaPolicy({ mfa_mode: 'required_all', enforce_mfa: false }, { NODE_ENV: 'production' }).mfa_mode, 'required_all');
+    assert.deepEqual(effectiveMfaPolicy({ mfa_mode: 'off', enforce_mfa: false }, {}), { mfa_mode: 'off', enforce_mfa: false });
   });
 });

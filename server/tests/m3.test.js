@@ -1914,3 +1914,45 @@ describe('memo PDF export (OUT-01 / OUT-03)', () => {
     assert.ok(audit.data.some((e) => e.action === 'memo_generate' && e.after?.format === 'pdf'));
   });
 });
+
+describe('configuration and audit hardening (NFR-02, AUD-03)', () => {
+  test('only an administrator changes application settings, and secrets are never shown to others', async (t) => {
+    if (!online) return t.skip('server offline');
+    const list = await api('/api/entities/AppSettings', { user: 'user-cio' });
+    const doa = list.data.find((x) => x.setting_key === 'doa_config');
+    if (doa) {
+      const tamper = await api('/api/entities/AppSettings/' + doa.id, { method: 'PUT', user: 'user-cio', body: { description: 'tampered' } });
+      assert.equal(tamper.status, 403);
+    }
+    const create = await api('/api/entities/AppSettings', { method: 'POST', user: 'user-sirius-deal-lead', body: { setting_key: 'auth_policy_config', setting_value: '{}' } });
+    assert.equal(create.status, 403);
+    const secret = await api('/api/entities/AppSettings', { method: 'POST', user: 'user-admin', body: { setting_key: 'hardening_probe', setting_value: { api_key: 'sk-live-123', model: 'm' } } });
+    assert.equal(secret.status, 201, JSON.stringify(secret.data));
+    const seen = (await api('/api/entities/AppSettings/' + secret.data.id, { user: 'user-cio' })).data;
+    assert.equal(seen.setting_value.api_key, '********');
+    assert.equal(seen.setting_value.model, 'm');
+    const admin = (await api('/api/entities/AppSettings/' + secret.data.id, { user: 'user-admin' })).data;
+    assert.equal(admin.setting_value.api_key, 'sk-live-123');
+    await api('/api/entities/AppSettings/' + secret.data.id, { method: 'DELETE', user: 'user-admin' });
+  });
+
+  test('a subsidiary does not see the audit trail of internal comments', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    await api('/api/qa/opportunities/' + draft.id + '/threads', {
+      method: 'POST', user: 'user-sirius-deal-lead', body: { subject: 'Internal pricing view', body: 'Too rich.', visibility: 'internal' },
+    });
+    const lead = await api('/api/audit?entity=DealOpportunity&entity_id=' + draft.id, { user: 'user-deal-lead' });
+    assert.ok(!lead.data.some((e) => e.action === 'qa_thread_open'));
+    const sirius = await api('/api/audit?entity=DealOpportunity&entity_id=' + draft.id, { user: 'user-sirius-deal-lead' });
+    assert.ok(sirius.data.some((e) => e.action === 'qa_thread_open'));
+  });
+
+  test('responses carry the security headers', async (t) => {
+    if (!online) return t.skip('server offline');
+    const res = await fetch(BASE + '/api/health');
+    assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.ok(res.headers.get('permissions-policy'));
+  });
+});

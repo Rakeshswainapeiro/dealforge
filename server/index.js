@@ -11,10 +11,10 @@ import { storageInfo, s3Enabled, ensureBucket } from './storage.js';
 import { classifyResidency } from './config/residency.js';
 import { entitiesRouter, auditRouter } from './entities.js';
 import orgRouter from './orgApi.js';
-import gateRouter, { seedDocumentRequirements } from './gate.js';
-import themesRouter, { seedThemes } from './themes.js';
-import pipelineRouter, { seedPipelineSla } from './pipeline.js';
-import workflowRouter, { seedWorkflows } from './workflows.js';
+import gateRouter from './gate.js';
+import themesRouter from './themes.js';
+import pipelineRouter from './pipeline.js';
+import workflowRouter from './workflows.js';
 import qaRouter from './qa.js';
 import notificationsRouter from './notify.js';
 import featuresRouter, { resolveAppFeatures } from './features.js';
@@ -43,12 +43,11 @@ import routingRouter from './routing.js';
 import { serveUpload } from './uploadsAccess.js';
 import { connectorsRouter, evidenceRouter, toolsRouter } from './connectors.js';
 import { strategyRouter } from './strategy.js';
-import { authHandler, auth, AUTH_BASE_PATH, loadAuthPolicy } from './auth.js';
+import { authHandler, AUTH_BASE_PATH, loadAuthPolicy } from './auth.js';
 import authPolicyRouter from './authPolicy.js';
 import adminConfigRouter from './adminConfig.js';
 import bulkImportRouter from './bulkImport.js';
 import aiGovernanceRouter, { purgeExpiredLLMLogs } from './aiGovernance.js';
-import { seedAuthTenants } from './authMigrate.js';
 import { mfaRequiredForRoles } from './config/authPolicy.js';
 import abacRouter from './abac.js';
 import adminRouter from './admin.js';
@@ -58,13 +57,16 @@ import { writeAudit } from './audit.js';
 import { resolveActor } from './users.js';
 import {
   isPublicApiRoute, startupConfigErrors, allowedCorsOrigins, isCorsOriginAllowed, headerIdentityEnabled,
+  trustProxySetting, effectiveMfaPolicy,
 } from './config/identityPolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
 
 const app = express();
-app.set('trust proxy', true);
+// Only the configured proxy hops are trusted for the client address (NFR-02),
+// so a client cannot forge X-Forwarded-For to dodge rate limits or audit IPs.
+app.set('trust proxy', trustProxySetting(process.env));
 app.use(securityHeaders());
 // Strict CORS allow-list (NFR-02). Disallowed origins get no CORS headers, so
 // the browser blocks the response. Credentials (session cookie) are allowed
@@ -162,7 +164,7 @@ app.use(async (req, res, next) => {
   try {
     if (!req.path.startsWith('/api/')) return next();
     if (req.path.startsWith('/api/auth') || req.path.startsWith('/api/health')) return next();
-    const policy = await loadAuthPolicy();
+    const policy = effectiveMfaPolicy(await loadAuthPolicy(), process.env);
     if (!policy.enforce_mfa) return next();
     // The viewer must at least be able to read their own MFA standing.
     const actor = req.actor || await resolveActor(req);
@@ -170,8 +172,16 @@ app.use(async (req, res, next) => {
     req.actor = actor;
     const required = mfaRequiredForRoles(actor.roles || [], policy);
     if (!required) return next();
-    const { rows } = await pool.query('SELECT "twoFactorEnabled" AS enabled FROM "user" WHERE id = $1', [actor.id]);
-    if (rows[0]?.enabled) return next();
+    // A user who signs in through the corporate identity provider gets their
+    // second factor there (conditional access); the in-app factor applies to
+    // password sign-ins.
+    const { rows } = await pool.query(
+      `SELECT u."twoFactorEnabled" AS enabled,
+              EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'credential') AS has_password
+         FROM "user" u WHERE lower(u.email) = lower($1)`,
+      [actor.email]
+    );
+    if (rows[0]?.enabled || rows[0]?.has_password === false) return next();
     if (req.path.startsWith('/api/auth-policy')) return next();
     return res.status(403).json({ error: 'mfa_required', mfa_required: true });
   } catch (err) {
@@ -271,6 +281,17 @@ async function start() {
     process.exit(1);
   }
   for (const e of configErrors) console.warn('[config] warning: ' + e);
+  // Data residency (NFR-01): in production every external processor must be
+  // pinned to an approved region, or carry an explicit Sirius IT sign-off.
+  const residency = classifyResidency(process.env);
+  if (!residency.posture_satisfied) {
+    const msg = 'not pinned to an approved region: ' + residency.summary.unpinned_ids.join(', ');
+    if (process.env.NODE_ENV === 'production' && process.env.RESIDENCY_SIGNOFF !== '1') {
+      console.error('[residency] ' + msg + '. Pin them (DATA_RESIDENCY_REGION / S3_REGION) or set RESIDENCY_SIGNOFF=1 after Sirius IT sign-off.');
+      process.exit(1);
+    }
+    console.warn('[residency] warning: ' + msg);
+  }
   if (headerIdentityEnabled(process.env)) {
     console.warn('[auth] header identity (x-user-id / x-user-email) is ENABLED - local testing only');
   }
@@ -278,6 +299,8 @@ async function start() {
   // booting (docker-compose) or intentionally absent in local frontend-only dev.
   initDb()
     .then(async () => {
+      // The AI-log retention sweep needs its table, so it runs after the schema.
+      purgeExpiredLLMLogs().catch(() => {});
       // Seeding is profile-driven (W1-11/W1-12): the Sirius org subtree, the
       // seeded cast and app config are the 'base' layer, and the deterministic
       // MVP sample fixtures (SEED_PROFILE=mvp) compose on top. SEED_CLEAN=1
@@ -332,7 +355,6 @@ async function start() {
     purgeExpiredLLMLogs().then((n) => { if (n) console.log(`[ai-governance] pruned ${n} expired AI log rows`); }).catch(() => {});
   }, 24 * 60 * 60 * 1000);
   if (typeof aiLogSweep.unref === 'function') aiLogSweep.unref();
-  purgeExpiredLLMLogs().catch(() => {});
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] listening on http://0.0.0.0:${PORT}`);
   });

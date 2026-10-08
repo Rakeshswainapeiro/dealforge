@@ -88,11 +88,13 @@ export function LaunchpadPanel({ opportunityId }) {
   const { toast } = useToast();
   const query = useQuery({ queryKey: ["tools", "launchpad", opportunityId], queryFn: () => api.tools.launchpad(opportunityId) });
   const launch = async (tool) => {
-    // Open the window first so the browser does not treat it as a pop-up.
-    const win = window.open("about:blank", "_blank", "noopener");
+    // Open the tab synchronously (so it is not treated as a pop-up), cut the
+    // opener link, then send it to the tool once the launch is recorded.
+    const win = window.open("about:blank", "_blank");
+    if (win) win.opener = null;
     try {
       const res = await api.tools.launch(tool.key, opportunityId);
-      if (win) win.location.href = res.url; else window.open(res.url, "_blank", "noopener");
+      if (win) win.location.href = res.url; else window.open(res.url, "_blank", "noopener,noreferrer");
       if (res.note) toast({ title: tool.label, description: res.note });
     } catch (e) {
       if (win) win.close();

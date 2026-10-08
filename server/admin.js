@@ -592,6 +592,11 @@ adminRouter.post('/seed', async (req, res) => {
     if (profile != null && !SEED_PROFILES.includes(profile)) {
       return res.status(400).json({ error: 'profile must be one of ' + SEED_PROFILES.join(', ') });
     }
+    // Sample data never goes into production, and a production database is
+    // never cleaned from the console (NFR-02).
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Seed operations are disabled in production' });
+    }
     // 'reload' = clean then load the requested (or currently resolved) profile.
     const result = await runSeed({
       profile: action === 'clean' ? 'off' : profile,

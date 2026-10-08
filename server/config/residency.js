@@ -24,14 +24,8 @@ export const RESIDENCY_DEPENDENCIES = [
   { id: 'postgres', label: 'Postgres (metadata)', kind: 'primary', env: null, in_boundary: true, note: 'The application database; provisioned in the sovereign region with the deployment.' },
   { id: 'storage', label: 'Object storage', kind: 'bytes', env: 'S3_REGION', in_boundary: false, note: 'Local-disk mode keeps bytes on the application host; S3 mode must set S3_REGION to an approved region.' },
   { id: 'ai_model', label: 'Model provider', kind: 'processor', env: 'OPENAI_BASE_URL', in_boundary: false, note: 'A self-hosted in-boundary endpoint (LocalAI) keeps prompts in-jurisdiction; a hosted OpenAI/Azure endpoint does not unless it is a UAE Azure region.' },
-  { id: 'mail_relay', label: 'Notification delivery', kind: 'processor', env: 'NOTIFY_BASE_URL', in_boundary: false, note: 'In-app notifications stay in the database; email/SMS relay through the configured endpoint.' },
+  { id: 'mail_relay', label: 'Email relay', kind: 'processor', env: 'SMTP_HOST', in_boundary: false, note: 'In-app notifications stay in the database; email goes through the SMTP relay Sirius designates (SMTP_HOST).' },
 ];
-
-function regionOf(env) {
-  if (!env) return null;
-  const value = process.env[env];
-  return value ? String(value) : null;
-}
 
 // Classify the deployment. A dependency is:
 //   - in_boundary: it runs inside the sovereign boundary by construction.

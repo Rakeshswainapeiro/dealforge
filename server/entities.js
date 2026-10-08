@@ -3,7 +3,7 @@ import express from 'express';
 import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
-import { canViewOrg, canWriteOrg, isCrossOrgReader } from './rbac.js';
+import { canViewOrg, canWriteOrg, isCrossOrgReader, canConfigure } from './rbac.js';
 import { evaluateAbac, ABAC_RESOURCES } from './abac.js';
 import { OPPORTUNITY_ENTITY, checkCreate, checkUpdate, checkDelete } from './config/opportunityPolicy.js';
 import { withLockedOpportunity } from './lifecycle.js';
@@ -291,7 +291,32 @@ entitiesRouter.use(async (req, res, next) => {
 
 function guardEntity(req, res, next) {
   if (!entityNameOk(req.params.entity)) return res.status(400).json({ error: 'Invalid entity name' });
+  // Application configuration (DoA, MFA policy, routing, connectors...) is
+  // changed only by an administrator, through its own audited endpoint or here
+  // (NFR-02). Without this, any group user could rewrite policy.
+  if (req.params.entity === CONFIG_ENTITY && req.method !== 'GET' && !canConfigure(req.actor?.membership)) {
+    return res.status(403).json({ error: 'Administrator role required to change application settings' });
+  }
   next();
+}
+
+const CONFIG_ENTITY = 'AppSettings';
+const SECRET_KEY = /(api_?key|secret|password|passwd|token|private_?key)/i;
+
+// Secrets inside a configuration value are never shown to a non-administrator.
+export function redactSecrets(value) {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) && v ? '********' : redactSecrets(v)]));
+  }
+  return value;
+}
+
+function redactSetting(rec, actor) {
+  if (!rec || canConfigure(actor?.membership)) return rec;
+  let v = rec.setting_value;
+  if (typeof v === 'string') { try { return { ...rec, setting_value: JSON.stringify(redactSecrets(JSON.parse(v))) }; } catch { return rec; } }
+  return { ...rec, setting_value: redactSecrets(v) };
 }
 
 function parseQuery(req) {
@@ -343,7 +368,7 @@ entitiesRouter.get('/:entity', guardEntity, async (req, res) => {
     const allowed = [];
     for (const rec of records) {
       const evalRes = await evaluateAbac(req.actor, abacResource(req.params.entity), 'read', recordAbacContext(rec));
-      if (evalRes.allowed) allowed.push(rec);
+      if (evalRes.allowed) allowed.push(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : rec);
     }
     res.json(allowed);
   } catch (err) { sendErr(res, err); }
@@ -354,7 +379,7 @@ entitiesRouter.get('/:entity/:id', guardEntity, async (req, res) => {
     const rec = await getRecord(req.params.entity, req.params.id, { actor: req.actor });
     if (!rec) return res.status(404).json({ error: 'Not found' });
     await enforceAbac(req, abacResource(req.params.entity), recordAbacContext(rec));
-    res.json(rec);
+    res.json(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : rec);
   } catch (err) { sendErr(res, err); }
 });
 
@@ -397,13 +422,16 @@ auditRouter.use(async (req, res, next) => {
 auditRouter.get('/', async (req, res) => {
   try {
     const { entity, entity_id: entityId, limit } = req.query;
+    const crossOrg = isCrossOrgReader(req.actor?.membership);
     const rows = await listAuditEvents({
       entity,
       entityId,
-      orgId: isCrossOrgReader(req.actor?.membership) ? undefined : req.actor?.org_id,
+      orgId: crossOrg ? undefined : req.actor?.org_id,
       limit,
     });
-    res.json(rows);
+    // Internal (group-only) comments are not visible to a subsidiary, and
+    // neither is the audit trail of them (AUD-03).
+    res.json(crossOrg ? rows : rows.filter((e) => e.after?.visibility !== 'internal' && e.before?.visibility !== 'internal'));
   } catch (err) { sendErr(res, err); }
 });
 

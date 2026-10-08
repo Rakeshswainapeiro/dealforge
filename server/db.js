@@ -822,9 +822,18 @@ CREATE INDEX IF NOT EXISTS sso_provider_domain_idx ON "ssoProvider"(domain);
 CREATE INDEX IF NOT EXISTS sso_provider_org_idx ON "ssoProvider"("organizationId");
 `;
 
-export async function initDb({ attempts = 15, delayMs = 2000 } = {}) {
+export async function initDb({ attempts = 15, delayMs = 2000, migrate = process.env.DB_MIGRATE_ON_BOOT !== '0' } = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      if (!migrate) {
+        // Least-privilege deployment (NFR-02): the app's database role cannot
+        // change the schema, so migrations run separately (npm run migrate,
+        // as the owner role) and boot only checks the schema is current.
+        const { rows } = await pool.query("SELECT to_regclass('public.evidence_item') AS t, to_regclass('public.tool_entitlement') AS e");
+        if (!rows[0]?.t || !rows[0]?.e) throw new Error('database schema is not current; run "npm run migrate" with the owner role');
+        console.log('[db] schema check passed (migrations run separately)');
+        return true;
+      }
       await pool.query(SCHEMA);
       // Better Auth tables are not created by the library (validateSchema is
       // disabled), so a brand-new database needs them before the identity seed
