@@ -3438,7 +3438,7 @@ export default function SubmitOpportunity() {
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <AlertTitle className="text-emerald-900">Submitted for screening</AlertTitle>
                 <AlertDescription className="text-emerald-800">
-                  New state: <span className="font-semibold">{submitResult.state}</span>.
+                  New state: <span className="font-semibold">{STATUS_META[normalizeState(submitResult.state)]?.label || submitResult.state}</span>.
                 </AlertDescription>
               </Alert>
             )}

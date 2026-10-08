@@ -232,6 +232,9 @@ export async function transitionOpportunity(opportunityId, toState, {
     if ((rule.requires || []).includes('question')) {
       const subject = String(question?.subject || '').trim();
       const body = String(question?.body || '').trim();
+      if (subject.length > 200 || body.length > 10000) {
+        throw httpError(400, 'Keep the subject under 200 characters and the question under 10,000');
+      }
       if (!subject || !body) {
         throw httpError(400, 'An information request needs a subject and the question itself', { missing: ['question'] });
       }

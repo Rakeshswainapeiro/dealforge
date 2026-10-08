@@ -45,7 +45,8 @@ export async function serveUpload(req, res) {
   try {
     const actor = await resolveActor(req);
     if (!actor) return res.status(401).json({ error: 'Sign in required' });
-    const filename = path.basename(decodeURIComponent(req.path || ''));
+    let filename;
+    try { filename = path.basename(decodeURIComponent(req.path || '')); } catch { return res.status(404).json({ error: 'Not found' }); }
     if (!filename || filename.startsWith('.')) return res.status(404).json({ error: 'Not found' });
     const allowed = await mayReadUpload(actor, filename);
     if (allowed === null) return res.status(404).json({ error: 'Not found' });

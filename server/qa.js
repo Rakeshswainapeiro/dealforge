@@ -207,6 +207,7 @@ export async function openThread(opportunityId, payload = {}, { actor } = {}) {
   const opp = await loadOpportunity(opportunityId, actor);
   const subject = (payload.subject || '').trim();
   if (!subject) { const e = new Error('A thread subject is required'); e.status = 400; throw e; }
+  if (subject.length > 200) { const e = new Error('Keep the subject under 200 characters'); e.status = 400; throw e; }
   const body = (payload.body || '').trim();
   if (!body) { const e = new Error('The first message cannot be empty'); e.status = 400; throw e; }
   const requiresResponse = Boolean(payload.requires_response);
@@ -257,6 +258,7 @@ export async function addMessage(threadId, payload = {}, { actor, documentId = n
   if (thread.status !== 'open') { const e = new Error('This thread is closed'); e.status = 409; throw e; }
   const body = (payload.body || '').trim();
   if (!body) { const e = new Error('A message body is required'); e.status = 400; throw e; }
+  if (body.length > 20000) { const e = new Error('Keep a message under 20,000 characters'); e.status = 400; throw e; }
   const isResponse = Boolean(payload.is_response);
   // An internal thread keeps every reply internal; otherwise the author may
   // mark an individual message internal. A subsidiary-only author cannot.
