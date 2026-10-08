@@ -1,3 +1,4 @@
+import { sendEmail, mailConfig } from './mailer.js';
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
@@ -15,9 +16,10 @@ import {
   presignGet,
   filesRouter,
 } from './storage.js';
-import { UPLOAD_MAX_BYTES, uploadFilter, rateLimit } from './security.js';
+import { UPLOAD_MAX_BYTES, uploadFilter, rateLimit, assertContentMatches } from './security.js';
 import { checkAIProvider, logLLMCall } from './aiGovernance.js';
 import { resolveActor } from './users.js';
+import { canConfigure } from './rbac.js';
 
 export { UPLOAD_DIR, filesRouter };
 
@@ -248,17 +250,19 @@ const upload = multer({
 router.post('/upload-file', uploadLimit, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
+    const actor = await resolveActor(req);
+    if (!actor) return res.status(401).json({ error: 'Sign in required' });
+    assertContentMatches(req.file.buffer, req.file.originalname);
     const saved = await saveFile({
       buffer: req.file.buffer,
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
     });
-    pool
-      .query(
-        'INSERT INTO uploads (filename, original_name, mimetype, size, storage, object_key) VALUES ($1, $2, $3, $4, $5, $6)',
-        [saved.filename, saved.original_name, saved.mimetype, saved.size, saved.storage, saved.key]
-      )
-      .catch((err) => console.warn('[db] failed to log upload:', err.message));
+    // The uploader and their organisation decide who may read it back (DOC-02).
+    await pool.query(
+      'INSERT INTO uploads (filename, original_name, mimetype, size, storage, object_key, uploaded_by, org_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [saved.filename, saved.original_name, saved.mimetype, saved.size, saved.storage, saved.key, actor.email, actor.org_id || null]
+    );
     return res.json({
       file_url: saved.file_url,
       filename: saved.filename,
@@ -268,6 +272,7 @@ router.post('/upload-file', uploadLimit, upload.single('file'), async (req, res)
       storage: saved.storage,
     });
   } catch (err) {
+    if (err.status === 415) return res.status(415).json({ error: err.message });
     console.error('[upload-file]', err.message);
     return res.status(502).json({ error: `Upload failed: ${err.message}` });
   }
@@ -330,57 +335,33 @@ router.post('/extract-data', aiLimit, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// SendEmail (Resend API if a key is available, otherwise log-only)
+// SendEmail - an administrator's test message through the configured SMTP
+// relay (NTF-01). Not an open relay: admin only, no caller-supplied sender or
+// keys. Notifications call the mailer directly.
 // ---------------------------------------------------------------------------
 router.post('/send-email', mailLimit, async (req, res) => {
-  const { to, subject, body, from_email, from_name, api_key } = req.body || {};
-  if (!to) return res.status(400).json({ error: 'A recipient "to" is required' });
-
-  const key = api_key || process.env.RESEND_API_KEY;
-  let status = 'logged';
-  if (key) {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: `${from_name || 'DealForge'} <${from_email || 'onboarding@resend.dev'}>`,
-          to: [to],
-          subject: subject || 'DealForge',
-          html: body || '',
-        }),
-      });
-      status = response.ok ? 'sent' : `failed:${response.status}`;
-    } catch (err) {
-      status = `failed:${err.message}`;
-    }
+  try {
+    const actor = await resolveActor(req);
+    if (!actor || !canConfigure(actor.membership)) return res.status(403).json({ error: 'Administrator role required' });
+    const { to, subject, body } = req.body || {};
+    if (!to) return res.status(400).json({ error: 'A recipient "to" is required' });
+    const result = await sendEmail({ to, subject, text: body });
+    return res.json({ status: 'success', delivered: result.delivered, detail: result.detail });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  pool
-    .query(
-      'INSERT INTO email_logs (to_email, from_email, subject, body, status) VALUES ($1, $2, $3, $4, $5)',
-      [to, from_email || null, subject || null, body || null, status]
-    )
-    .catch((err) => console.warn('[db] failed to log email:', err.message));
-
-  return res.json({ status: 'success', delivered: status === 'sent', detail: status });
 });
 
-// ---------------------------------------------------------------------------
-// SendSMS (log-only in local mode)
-// ---------------------------------------------------------------------------
-router.post('/send-sms', mailLimit, async (req, res) => {
-  const { to, message } = req.body || {};
-  if (!to) return res.status(400).json({ error: 'A recipient "to" is required' });
-  await pool
-    .query('INSERT INTO sms_logs (to_number, message, status) VALUES ($1, $2, $3)', [
-      to,
-      message || null,
-      'logged',
-    ])
-    .catch((err) => console.warn('[db] failed to log sms:', err.message));
-  return res.json({ status: 'success', delivered: false, detail: 'logged (no SMS provider configured)' });
+// The relay in use, without secrets (admin only).
+router.get('/mail-status', async (req, res) => {
+  const actor = await resolveActor(req).catch(() => null);
+  if (!actor || !canConfigure(actor.membership)) return res.status(403).json({ error: 'Administrator role required' });
+  const c = mailConfig();
+  res.json({ mode: c.mode, host: c.host || null, port: c.port, secure: c.secure, from: c.from, authenticated: Boolean(c.user) });
 });
+
+// SMS is not in Phase 1 scope (NTF-01 is in-app and email).
+router.post('/send-sms', mailLimit, (_req, res) => res.status(501).json({ error: 'No SMS gateway is configured' }));
 
 // ---------------------------------------------------------------------------
 // GenerateImage

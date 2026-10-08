@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { initDb, pool } from './db.js';
-import integrationsRouter, { UPLOAD_DIR, filesRouter } from './integrations.js';
+import integrationsRouter, { filesRouter } from './integrations.js';
 import dataroomRouter, { dataroomInfo } from './dataroom.js';
 import { storageInfo, s3Enabled, ensureBucket } from './storage.js';
 import { classifyResidency } from './config/residency.js';
@@ -40,6 +40,7 @@ import templatesRouter from './templates.js';
 import decisionReasonsRouter from './decisionReasons.js';
 import doaRouter from './doa.js';
 import routingRouter from './routing.js';
+import { serveUpload } from './uploadsAccess.js';
 import { connectorsRouter, evidenceRouter, toolsRouter } from './connectors.js';
 import { strategyRouter } from './strategy.js';
 import { authHandler, auth, AUTH_BASE_PATH, loadAuthPolicy } from './auth.js';
@@ -181,11 +182,9 @@ app.use(async (req, res, next) => {
 
 
 
-// Uploaded files are served by opaque (uuid) names and never listed; block
-// dotfiles and directory indexes so the local-disk mode cannot be walked.
-// Local-disk uploads require a signed-in user (NFR-02). Per-organisation
-// access checks for local files are a known gap tracked under DOC-02.
-app.use('/uploads', requireAuthenticatedUser, express.static(UPLOAD_DIR, { dotfiles: 'deny', index: false }));
+// Local-disk files are served only to a signed-in user who may see the record
+// they belong to (NFR-02, DOC-02, PLT-02); never listed, always as downloads.
+app.use('/uploads', requireAuthenticatedUser, serveUpload);
 app.use('/api/files', filesRouter);
 app.use('/api/integrations', integrationsRouter);
 app.use('/api/dataroom', dataroomRouter);

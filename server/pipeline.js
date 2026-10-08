@@ -9,6 +9,7 @@ import { getOrganization } from './org.js';
 import { listDocuments, evaluateGate, loadQualityScoreConfig } from './gate.js';
 import { buildSiriusMemo, missingMemoFields } from './config/siriusMemo.js';
 import { packSiriusMemo } from './siriusMemoDocx.js';
+import { renderSiriusMemoPdf } from './siriusMemoPdf.js';
 import { prepareDocxVerification } from './memoVerification.js';
 import { loadDataSourceConfig } from './dataSource.js';
 import { buildSourceMap } from './config/dataSource.js';
@@ -792,6 +793,28 @@ pipelineRouter.get('/opportunities/:id/memo.docx', async (req, res) => {
       entity: OPPORTUNITY_ENTITY, entityId: row.id, action: 'memo_generate',
       actor: req.actor, orgId: row.owner_org_id,
       after: { format: 'docx', pages: memo.pages.length, subsidiary: org?.name || null },
+    });
+    res.send(buffer);
+  } catch (err) { sendErr(res, err); }
+});
+
+// The same memo as a PDF (OUT-01), with the scan-to-verify QR (OUT-03).
+pipelineRouter.get('/opportunities/:id/memo.pdf', async (req, res) => {
+  try {
+    const { row, org, documents, alignment } = await loadMemoInputs(req);
+    const memo = buildSiriusMemo({ opportunity: row, org, documents, alignment });
+    let verification = null;
+    try {
+      verification = await prepareDocxVerification({ row, memo, actor: req.actor, format: 'pdf' });
+    } catch { verification = null; }
+    const buffer = renderSiriusMemoPdf(memo, verification);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${memoFilename(row, org).replace(/\.docx$/i, '') + '.pdf'}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    await writeAudit({
+      entity: OPPORTUNITY_ENTITY, entityId: row.id, action: 'memo_generate',
+      actor: req.actor, orgId: row.owner_org_id,
+      after: { format: 'pdf', pages: memo.pages.length, subsidiary: org?.name || null },
     });
     res.send(buffer);
   } catch (err) { sendErr(res, err); }

@@ -286,11 +286,11 @@ export default function SiriusMemoDialog({ opportunityId, opportunityName, open,
   const memo = memoQuery.data;
   const missing = memo?.missing || [];
 
-  const handleDownload = async () => {
+  const handleDownload = async (format = "docx") => {
     setDownloading(true);
     setDownloadError(null);
     try {
-      await api.pipeline.downloadMemo(opportunityId);
+      await api.pipeline.downloadMemo(opportunityId, format);
     } catch (err) {
       setDownloadError(err?.message || "Could not download the memo.");
     } finally {
@@ -398,11 +398,22 @@ export default function SiriusMemoDialog({ opportunityId, opportunityName, open,
                 <Button
                   size="sm"
                   className="gap-2 bg-cyan-700 hover:bg-cyan-800"
-                  onClick={handleDownload}
+                  onClick={() => handleDownload("docx")}
                   disabled={downloading}
                 >
                   {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                   Download .docx
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => handleDownload("pdf")}
+                  disabled={downloading}
+                  data-testid="memo-download-pdf"
+                >
+                  <Download className="h-4 w-4" />
+                  Download PDF
                 </Button>
                 {verifyEnabled && (
                   <Button

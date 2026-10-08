@@ -1,3 +1,4 @@
+import { sendEmail } from './mailer.js';
 import crypto from 'node:crypto';
 import express from 'express';
 import { pool } from './db.js';
@@ -20,14 +21,6 @@ import { shouldDeliverEmailNow } from './notificationFrequency.js';
 // failures are logged, never thrown, so a notification can never break a state
 // change (REQ-FLOW-02).
 // ---------------------------------------------------------------------------
-
-// Server-side transport calls the integrations endpoints on this process. The
-// public base URL is the browser-facing address and may not be reachable from
-// inside a container, so default to the bound port and allow an override.
-const API_BASE = (
-  process.env.NOTIFY_BASE_URL ||
-  `http://127.0.0.1:${process.env.PORT || 3001}`
-).replace(/[/]+$/, '');
 
 export const NOTIFY_CHANNELS = ['in_app', 'email', 'sms'];
 
@@ -127,20 +120,11 @@ export async function notify({
         status = 'deferred';
         detail = 'queued for daily digest';
       } else if (performDelivery) {
-        try {
-          const res = await fetch(API_BASE + '/api/integrations/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: recipient.email, subject: subject || 'DealForge', body: body || subject || '' }),
-          });
-          const json = await res.json().catch(() => ({}));
-          status = json.delivered ? 'sent' : 'logged';
-          detail = json.detail || (res.ok ? 'accepted' : 'http ' + res.status);
-        } catch (err) {
-          status = 'failed';
-          detail = err.message;
-          console.warn('[notify] email delivery failed:', err.message);
-        }
+        // Straight to the in-region SMTP relay (no HTTP hop, no client keys).
+        const sent = await sendEmail({ to: recipient.email, subject: subject || 'DealForge', text: body || subject || '' });
+        status = sent.delivered ? 'sent' : sent.status;
+        detail = sent.detail;
+        if (sent.status === 'failed') console.warn('[notify] email delivery failed:', sent.detail);
       }
       rows.push(await recordChannel({
         recipient, channel: 'email', kind, subject, body, entity, entityId, orgId, actor, status, providerDetail: detail,
@@ -150,20 +134,10 @@ export async function notify({
       let status = 'recorded';
       let detail = 'transport disabled';
       if (performDelivery) {
-        try {
-          const res = await fetch(API_BASE + '/api/integrations/send-sms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: recipient.phone, message: body || subject || 'DealForge' }),
-          });
-          const json = await res.json().catch(() => ({}));
-          status = json.delivered ? 'sent' : 'logged';
-          detail = json.detail || (res.ok ? 'accepted' : 'http ' + res.status);
-        } catch (err) {
-          status = 'failed';
-          detail = err.message;
-          console.warn('[notify] sms delivery failed:', err.message);
-        }
+        // No SMS gateway is in Phase 1 scope (NTF-01 is in-app and email);
+        // the row records that nothing was sent.
+        status = 'logged';
+        detail = 'no SMS gateway configured';
       }
       rows.push(await recordChannel({
         recipient, channel: 'sms', kind, subject, body, entity, entityId, orgId, actor,

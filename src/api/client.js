@@ -996,9 +996,10 @@ const pipeline = {
 
   // Downloads the memo as .docx. Uses the same actor headers as serverFetch so
   // the request is scoped to the signed-in user's organisations.
-  async downloadMemo(opportunityId) {
+  async downloadMemo(opportunityId, format = 'docx') {
+    const ext = format === 'pdf' ? 'pdf' : 'docx';
     const response = await fetch(
-      `${API_BASE}/api/pipeline/opportunities/${encodeURIComponent(opportunityId)}/memo.docx`,
+      `${API_BASE}/api/pipeline/opportunities/${encodeURIComponent(opportunityId)}/memo.${ext}`,
       { headers: actorHeaders() }
     );
     if (!response.ok) {
@@ -1009,7 +1010,7 @@ const pipeline = {
     }
     const disposition = response.headers.get('Content-Disposition') || '';
     const match = disposition.match(/filename="?([^";]+)"?/i);
-    const filename = match ? match[1] : `Sirius_Memo_${opportunityId}.docx`;
+    const filename = match ? match[1] : `Sirius_Memo_${opportunityId}.${ext}`;
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1861,7 +1862,10 @@ export const api = {
   duplicates,
   notifications,
   admin,
-  integrations: { Core },
+  integrations: {
+    Core,
+    mailStatus() { return serverFetch('/api/integrations/mail-status'); },
+  },
   appLogs,
   // Escape hatch for local data management (seeding, reset).
   _local: {

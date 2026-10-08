@@ -8,7 +8,7 @@ import { canViewOrg, isCrossOrgReader, canConfigure } from './rbac.js';
 import { saveFile, storageInfo, scopedObjectKey, getObjectStream, UPLOAD_DIR } from './storage.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
+import { UPLOAD_MAX_BYTES, uploadFilter, assertContentMatches } from './security.js';
 import { loadDocumentPolicyConfig } from './documentPolicy.js';
 import { checkUpload, scanUpload, scanBlocksUpload } from './config/documentPolicy.js';
 import { loadSufficiencyConfig } from './sufficiency.js';
@@ -305,6 +305,7 @@ export async function addDocumentVersion({
     err.violations = violations;
     throw err;
   }
+  assertContentMatches(file.buffer, file.originalname);
   const scan = await scanUpload(file.buffer, policy, { filename: file.originalname });
   if (scanBlocksUpload(scan, policy)) {
     const err = new Error(scan.verdict === 'infected'

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Settings as SettingsIcon, Save, CheckCircle, AlertCircle, Brain, Lock, Mail, Send, Shield, TrendingUp, RefreshCw, Trash2, ToggleLeft, LayoutGrid, Briefcase, Upload, Download } from "lucide-react";
+import { Settings as SettingsIcon, Save, CheckCircle, AlertCircle, Brain, Lock, Mail, Shield, TrendingUp, RefreshCw, Trash2, ToggleLeft, LayoutGrid, Briefcase, Upload, Download } from "lucide-react";
 import { Sparkles } from "lucide-react";
 import { Gavel, ShieldAlert, MessageSquare } from "lucide-react";
 import { ShieldCheck } from "lucide-react";
@@ -23,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RoutingRulesPanel from "@/components/settings/RoutingRulesPanel";
 import ConnectorsPanel from "@/components/settings/ConnectorsPanel";
+import MailPanel from "@/components/settings/MailPanel";
 import { Badge } from "@/components/ui/badge";
 
 // Human labels for the template-library categories (W5-05 / DOC-06), mirroring
@@ -72,21 +73,9 @@ export default function Settings() {
     enabled: false,
   });
 
-  const [emailSettings, setEmailSettings] = useState({
-    provider: "resend",
-    api_key: "",
-    from_email: "",
-    from_name: "",
-    enabled: false,
-  });
-
   const [testResult, setTestResult] = useState(null);
-  const [emailTestResult, setEmailTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
-  const [testingEmail, setTestingEmail] = useState(false);
-  const [testEmailAddress, setTestEmailAddress] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [emailSaveSuccess, setEmailSaveSuccess] = useState(false);
   
   const [dataProviders, setDataProviders] = useState({
     bloomberg: { enabled: false, api_key: "", endpoint: "" },
@@ -245,14 +234,10 @@ export default function Settings() {
 
   useEffect(() => {
     const aiConfig = appSettings.find(s => s.setting_key === 'ai_config');
-    const emailConfig = appSettings.find(s => s.setting_key === 'email_config');
     const dataConfig = appSettings.find(s => s.setting_key === 'data_providers_config');
 
     if (aiConfig?.setting_value) {
       setAiSettings(aiConfig.setting_value);
-    }
-    if (emailConfig?.setting_value) {
-      setEmailSettings(emailConfig.setting_value);
     }
     if (dataConfig?.setting_value) {
       setDataProviders(dataConfig.setting_value);
@@ -516,30 +501,6 @@ export default function Settings() {
     },
   });
 
-  const saveEmailMutation = useMutation({
-    mutationFn: async (settings) => {
-      const user = await api.auth.me();
-      const existingSetting = appSettings.find(s => s.setting_key === 'email_config');
-      
-      const data = {
-        setting_key: 'email_config',
-        setting_value: settings,
-        description: 'Email/SMTP Configuration',
-        last_updated_by: user.email
-      };
-
-      if (existingSetting) {
-        return await api.entities.AppSettings.update(existingSetting.id, data);
-      } else {
-        return await api.entities.AppSettings.create(data);
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['appSettings'] });
-      setEmailSaveSuccess(true);
-      setTimeout(() => setEmailSaveSuccess(false), 3000);
-    },
-  });
 
   const saveFeaturesMutation = useMutation({
     mutationFn: (overrides) => api.features.save(overrides),
@@ -836,10 +797,6 @@ export default function Settings() {
     saveAiMutation.mutate(aiSettings);
   };
 
-  const handleEmailSave = () => {
-    if (!isAdmin) return;
-    saveEmailMutation.mutate(emailSettings);
-  };
 
   const testConnection = async () => {
     setTesting(true);
@@ -867,45 +824,6 @@ export default function Settings() {
     }
   };
 
-  const testEmail = async () => {
-    if (!testEmailAddress) {
-      setEmailTestResult({
-        success: false,
-        message: "Please enter an email address to test"
-      });
-      return;
-    }
-
-    setTestingEmail(true);
-    setEmailTestResult(null);
-
-    try {
-      await api.integrations.Core.SendEmail({
-        from_name: emailSettings.from_name || "DealForge",
-        to: testEmailAddress,
-        subject: "Test Email from DealForge",
-        body: `
-          <h2>Email Configuration Test</h2>
-          <p>This is a test email from your DealForge M&A platform.</p>
-          <p>If you're receiving this, your email settings are configured correctly!</p>
-          <hr>
-          <p><small>Sent from: ${emailSettings.from_email || 'default@dealforge.local'}</small></p>
-        `
-      });
-
-      setEmailTestResult({
-        success: true,
-        message: `Test email sent successfully to ${testEmailAddress}. Please check your inbox.`
-      });
-    } catch (error) {
-      setEmailTestResult({
-        success: false,
-        message: error.message || "Failed to send test email. Please check your settings."
-      });
-    } finally {
-      setTestingEmail(false);
-    }
-  };
 
   const handleChange = (field, value) => {
     if (!isAdmin) return;
@@ -914,12 +832,6 @@ export default function Settings() {
     setTestResult(null);
   };
 
-  const handleEmailChange = (field, value) => {
-    if (!isAdmin) return;
-    setEmailSettings(prev => ({ ...prev, [field]: value }));
-    setEmailSaveSuccess(false);
-    setEmailTestResult(null);
-  };
 
   const handleDataProviderChange = (provider, field, value) => {
     if (!isAdmin) return;
@@ -1321,209 +1233,9 @@ Simulate a simple validation check and return whether the connection would be su
             </Card>
           </TabsContent>
 
-          {/* Email Settings Tab */}
+          {/* Email Settings Tab: the in-region SMTP relay is server configuration (NTF-01). */}
           <TabsContent value="email" className="flex-1 min-w-0 mt-0">
-            <Card className="border-slate-200 shadow-sm">
-              <CardHeader className="border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center">
-                    <Mail className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="flex-1">
-                    <CardTitle>Email & SMTP Configuration</CardTitle>
-                    <CardDescription>
-                      Resend API for sending emails from your domain (applies to all users)
-                    </CardDescription>
-                  </div>
-                  {appSettings.find(s => s.setting_key === 'email_config')?.last_updated_by && (
-                    <div className="text-right">
-                      <p className="text-xs text-slate-500">Last updated by:</p>
-                      <p className="text-xs font-medium text-slate-700">
-                        {appSettings.find(s => s.setting_key === 'email_config').last_updated_by}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="p-6 space-y-6">
-                <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Mail className="w-5 h-5 text-slate-600" />
-                    <div>
-                      <p className="font-medium text-slate-900">Enable Custom Email Service</p>
-                      <p className="text-sm text-slate-600">Use Resend API with custom domain for all users</p>
-                    </div>
-                  </div>
-                  <Switch
-                    checked={emailSettings.enabled}
-                    onCheckedChange={(checked) => handleEmailChange("enabled", checked)}
-                    disabled={!isAdmin}
-                  />
-                </div>
-
-                {emailSettings.enabled && (
-                  <>
-                    <Separator />
-
-                    <Alert className="border-blue-200 bg-blue-50">
-                      <Send className="h-4 w-4 text-blue-600" />
-                      <AlertDescription className="text-blue-900">
-                        <strong>Resend Setup:</strong> Sign up at <a href="https://resend.com" target="_blank" rel="noopener noreferrer" className="underline">resend.com</a>, verify your domain, and get your API key.
-                      </AlertDescription>
-                    </Alert>
-
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="email_api_key" className="flex items-center gap-2">
-                          <Lock className="w-3 h-3" />
-                          Resend API Key
-                        </Label>
-                        <Input
-                          id="email_api_key"
-                          type="password"
-                          value={emailSettings.api_key}
-                          onChange={(e) => handleEmailChange("api_key", e.target.value)}
-                          placeholder="re_..."
-                          className="font-mono text-sm"
-                          disabled={!isAdmin}
-                        />
-                        {isAdmin && (
-                          <p className="text-xs text-slate-500">
-                            Get your API key from: <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" className="underline">resend.com/api-keys</a>
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="from_email">From Email Address</Label>
-                        <Input
-                          id="from_email"
-                          type="email"
-                          value={emailSettings.from_email}
-                          onChange={(e) => handleEmailChange("from_email", e.target.value)}
-                          placeholder="notifications@yourdomain.com"
-                          disabled={!isAdmin}
-                        />
-                        {isAdmin && (
-                          <p className="text-xs text-slate-500">
-                            Must be from a domain you've verified in Resend
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="from_name">From Name</Label>
-                        <Input
-                          id="from_name"
-                          value={emailSettings.from_name}
-                          onChange={(e) => handleEmailChange("from_name", e.target.value)}
-                          placeholder="DealForge Platform"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                    </div>
-
-                    {isAdmin && (
-                      <>
-                        <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-                          <h4 className="font-medium text-slate-900">Quick Setup Guide</h4>
-                          <ol className="space-y-2 text-sm text-slate-700 list-decimal list-inside">
-                            <li>Create a free account at <a href="https://resend.com" target="_blank" rel="noopener noreferrer" className="underline text-blue-600">resend.com</a></li>
-                            <li>Add and verify your custom domain (e.g., yourdomain.com)</li>
-                            <li>Generate an API key in the Resend dashboard</li>
-                            <li>Paste the API key above and set your from email address</li>
-                            <li>Test the configuration using the button below</li>
-                          </ol>
-                        </div>
-
-                        <Separator />
-
-                        <div className="space-y-3">
-                          <Label htmlFor="test_email">Test Email Address</Label>
-                          <div className="flex gap-3">
-                            <Input
-                              id="test_email"
-                              type="email"
-                              value={testEmailAddress}
-                              onChange={(e) => setTestEmailAddress(e.target.value)}
-                              placeholder="your@email.com"
-                              className="flex-1"
-                            />
-                            <Button
-                              onClick={testEmail}
-                              disabled={testingEmail || !emailSettings.api_key || !emailSettings.from_email}
-                              variant="outline"
-                            >
-                              {testingEmail ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-600 mr-2" />
-                                  Sending...
-                                </>
-                              ) : (
-                                <>
-                                  <Send className="w-4 h-4 mr-2" />
-                                  Send Test
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-
-                        {emailTestResult && (
-                          <Alert className={emailTestResult.success ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}>
-                            {emailTestResult.success ? (
-                              <CheckCircle className="h-4 w-4 text-emerald-600" />
-                            ) : (
-                              <AlertCircle className="h-4 w-4 text-red-600" />
-                            )}
-                            <AlertDescription className={emailTestResult.success ? "text-emerald-900" : "text-red-900"}>
-                              {emailTestResult.message}
-                            </AlertDescription>
-                          </Alert>
-                        )}
-
-                        <Separator />
-                      </>
-                    )}
-
-                    {isAdmin && (
-                      <div className="flex justify-end">
-                        <Button
-                          onClick={handleEmailSave}
-                          disabled={saveEmailMutation.isPending}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {emailSaveSuccess ? (
-                            <>
-                              <CheckCircle className="w-4 h-4 mr-2" />
-                              Saved!
-                            </>
-                          ) : (
-                            <>
-                              <Save className="w-4 h-4 mr-2" />
-                              Save Email Settings
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {!emailSettings.enabled && (
-                  <div className="text-center py-8">
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Mail className="w-8 h-8 text-slate-400" />
-                    </div>
-                    <p className="text-slate-600">
-                      {isAdmin 
-                        ? "Enable custom email service to send emails from your own domain"
-                        : "Custom email service is currently disabled. Contact an administrator to enable it."}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <MailPanel isAdmin={isAdmin} />
           </TabsContent>
 
           {/* Data Providers Tab */}

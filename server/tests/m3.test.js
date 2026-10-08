@@ -1861,3 +1861,56 @@ describe('connectors, evidence and tool launchpad (INTG-07/11/12, EXP-03, ACC-01
     assert.equal(revoke.status, 200);
   });
 });
+
+describe('stored files follow the record (DOC-02 / PLT-02)', () => {
+  test('a disguised file is refused and local files are only served in scope', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { data: draft } = await api('/api/entities/DealOpportunity', { method: 'POST', user: 'user-deal-lead', body: { ...FULL_FIELDS, opportunity_name: 'DOC-02 probe' } });
+    const fake = new FormData();
+    fake.append('requirement_key', 'business_plan');
+    fake.append('file', new Blob(['not really a pdf'], { type: 'application/pdf' }), 'plan.pdf');
+    const refused = await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: fake });
+    assert.equal(refused.status, 415, JSON.stringify(refused.data));
+
+    const ok = await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: uploadForm('business_plan', 'plan.txt') });
+    assert.equal(ok.status, 201, JSON.stringify(ok.data));
+    if (ok.data.storage !== 'local') return;
+    const url = '/uploads/' + ok.data.filename;
+    const mine = await fetch(BASE + url, { headers: { 'x-user-id': 'user-deal-lead' } });
+    assert.equal(mine.status, 200);
+    assert.equal(mine.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(mine.headers.get('content-disposition') || '', /attachment/);
+    const sibling = await fetch(BASE + url, { headers: { 'x-user-id': 'user-finstreet-lead' } });
+    assert.equal(sibling.status, 403);
+    const unknown = await fetch(BASE + '/uploads/does-not-exist.txt', { headers: { 'x-user-id': 'user-admin' } });
+    assert.equal(unknown.status, 404);
+  });
+
+  test('the test-email endpoint is admin only and not an open relay', async (t) => {
+    if (!online) return t.skip('server offline');
+    const denied = await api('/api/integrations/send-email', { method: 'POST', user: 'user-deal-lead', body: { to: 'someone@example.com', subject: 'x', body: 'y' } });
+    assert.equal(denied.status, 403);
+    const status = await api('/api/integrations/mail-status', { user: 'user-admin' });
+    assert.equal(status.status, 200);
+    assert.equal('pass' in status.data, false, 'never returns a secret');
+  });
+});
+
+describe('memo PDF export (OUT-01 / OUT-03)', () => {
+  test('the memo downloads as a PDF with the verification QR, audited', async (t) => {
+    if (!online) return t.skip('server offline');
+    const { draft } = await makeSubmitted('user-deal-lead');
+    const res = await fetch(BASE + '/api/pipeline/opportunities/' + draft.id + '/memo.pdf', { headers: { 'x-user-id': 'user-sirius-deal-lead' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/pdf');
+    assert.match(res.headers.get('content-disposition') || '', /\.pdf"/);
+    const buf = Buffer.from(await res.arrayBuffer());
+    assert.equal(buf.subarray(0, 5).toString(), '%PDF-');
+    assert.match(buf.toString('latin1'), /Scan to verify/);
+    assert.match(buf.toString('latin1'), /%%EOF\s*$/);
+    const sibling = await fetch(BASE + '/api/pipeline/opportunities/' + draft.id + '/memo.pdf', { headers: { 'x-user-id': 'user-finstreet-lead' } });
+    assert.equal(sibling.status, 403);
+    const audit = await api('/api/audit?entity=DealOpportunity&entity_id=' + draft.id, { user: 'user-admin' });
+    assert.ok(audit.data.some((e) => e.action === 'memo_generate' && e.after?.format === 'pdf'));
+  });
+});

@@ -104,7 +104,7 @@ async function recordIssuance({ opportunityId, ownerOrgId, version, hash, url, a
 // the printed footer carries a live QR (W7-05), and re-used by the QR image
 // routes. Kept here (not in the pure config module) because it writes the
 // issuance row and the audit event.
-export async function prepareDocxVerification({ row, memo, actor }) {
+export async function prepareDocxVerification({ row, memo, actor, format = 'docx' }) {
   const hash = memoFingerprint(memo);
   const version = contentVersion(hash);
   const issuedAt = new Date().toISOString();
@@ -116,7 +116,7 @@ export async function prepareDocxVerification({ row, memo, actor }) {
   await recordIssuance({ opportunityId: row.id, ownerOrgId: row.owner_org_id, version, hash, url: issued.url, actor });
   await writeAudit({
     entity: OPPORTUNITY_ENTITY, entityId: row.id, action: 'memo_verification_issued',
-    actor, orgId: row.owner_org_id, after: { version, hash, url: issued.url, embedded: 'docx' },
+    actor, orgId: row.owner_org_id, after: { version, hash, url: issued.url, embedded: format },
   });
   return { qr, version, hash, url: issued.url, issued_at: issuedAt };
 }

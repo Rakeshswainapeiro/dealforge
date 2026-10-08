@@ -102,6 +102,52 @@ export function isAllowedUpload(filename) {
   return SAFE_UPLOAD_EXTENSIONS.has(name.slice(dot).toLowerCase());
 }
 
+// Content check (DOC-02): the bytes must match the extension, so a renamed
+// executable or HTML page cannot be stored as a "PDF" or a "CSV".
+const ZIP = [0x50, 0x4b, 0x03, 0x04];
+const OLE = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+const SIGNATURES = {
+  '.pdf': [[0x25, 0x50, 0x44, 0x46]],
+  '.docx': [ZIP], '.xlsx': [ZIP], '.pptx': [ZIP], '.odt': [ZIP], '.ods': [ZIP], '.zip': [ZIP],
+  '.doc': [OLE], '.xls': [OLE], '.ppt': [OLE], '.msg': [OLE],
+  '.png': [[0x89, 0x50, 0x4e, 0x47]], '.jpg': [[0xff, 0xd8, 0xff]], '.jpeg': [[0xff, 0xd8, 0xff]],
+  '.gif': [[0x47, 0x49, 0x46, 0x38]], '.webp': [[0x52, 0x49, 0x46, 0x46]], '.bmp': [[0x42, 0x4d]],
+  '.tif': [[0x49, 0x49, 0x2a, 0x00], [0x4d, 0x4d, 0x00, 0x2a]], '.tiff': [[0x49, 0x49, 0x2a, 0x00], [0x4d, 0x4d, 0x00, 0x2a]],
+  '.rtf': [[0x7b, 0x5c, 0x72, 0x74, 0x66]],
+};
+const TEXT_EXTENSIONS = new Set(['.csv', '.tsv', '.txt', '.md', '.json', '.xml', '.log', '.eml']);
+// Executables and scriptable documents that must never hide behind a text type.
+const FORBIDDEN_PREFIXES = [[0x4d, 0x5a], [0x7f, 0x45, 0x4c, 0x46], [0xca, 0xfe, 0xba, 0xbe], [0x23, 0x21]];
+
+const startsWith = (buf, sig) => buf.length >= sig.length && sig.every((b, i) => buf[i] === b);
+
+/** Returns null when the content matches the extension, otherwise a reason. */
+export function contentMismatch(buffer, filename) {
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  const name = String(filename || '');
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  if (!buf.length) return 'The file is empty';
+  if (FORBIDDEN_PREFIXES.some((sig) => startsWith(buf, sig))) return 'The file is an executable or script';
+  const sigs = SIGNATURES[ext];
+  if (sigs) return sigs.some((sig) => startsWith(buf, sig)) ? null : 'The file content is not a valid ' + ext.slice(1).toUpperCase();
+  if (TEXT_EXTENSIONS.has(ext)) {
+    const head = buf.subarray(0, 8192);
+    if (head.includes(0)) return 'A text file must not contain binary data';
+    const lead = head.toString('utf8').trimStart().slice(0, 64).toLowerCase();
+    if ((ext !== '.xml' && ext !== '.md') && (lead.startsWith('<!doctype html') || lead.startsWith('<html') || lead.startsWith('<script') || lead.startsWith('<svg'))) {
+      return 'An HTML or script document cannot be uploaded as ' + ext.slice(1);
+    }
+    return null;
+  }
+  return null;
+}
+
+/** Throws a 415 when the content does not match the extension. */
+export function assertContentMatches(buffer, filename) {
+  const reason = contentMismatch(buffer, filename);
+  if (reason) { const e = new Error(reason + ': ' + (filename || 'file')); e.status = 415; throw e; }
+}
+
 // multer fileFilter that rejects disallowed extensions with a 415-shaped error.
 export function uploadFilter(_req, file, cb) {
   if (!isAllowedUpload(file.originalname)) {

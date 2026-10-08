@@ -16,7 +16,7 @@ import { resolveActor } from './users.js';
 import { canConfigure, canViewOrg, canWriteOrg } from './rbac.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { saveFile, getObjectBuffer, scopedObjectKey } from './storage.js';
-import { uploadFilter, UPLOAD_MAX_BYTES } from './security.js';
+import { uploadFilter, UPLOAD_MAX_BYTES, assertContentMatches } from './security.js';
 import {
   STRATEGY_INDEX_VERSION, STRATEGY_DOC_FORMATS, STRATEGY_STATUS, STRATEGY_MESSAGES,
   isIndexableFormat, extractText, buildPassages, rankPassages, bestCitation,
@@ -265,6 +265,7 @@ strategyRouter.post('/documents', upload.single('file'), async (req, res) => {
       return res.status(403).json({ error: 'Not permitted to add strategy documents to this entity' });
     }
     if (!req.file?.buffer) return res.status(400).json({ error: 'A file is required' });
+    assertContentMatches(req.file.buffer, req.file.originalname);
     const sha256 = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     const key = scopedObjectKey({ orgId, opportunityId: 'strategy', originalName: req.file.originalname });
     const saved = await saveFile({ buffer: req.file.buffer, originalName: req.file.originalname, mimetype: req.file.mimetype, key });
