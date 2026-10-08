@@ -48,7 +48,7 @@ async function counts() {
 describe('seed cleanup and MVP fixtures', { skip: !ENABLED && 'set SEED_TEST=1 with a live database' }, () => {
   test('a fresh mvp load creates the twenty fixtures and the seed persona', async () => {
     const c = await counts();
-    assert.equal(c.opps, 20, 'twenty seed opportunities');
+    assert.equal(c.opps, MVP_FIXTURES.length, 'one seed opportunity per fixture');
     assert.ok(c.seed_users >= 13, 'shipped cast plus the seed persona');
     assert.equal(c.sirius_org, 1, 'the Sirius org tree survives');
   });
@@ -66,7 +66,7 @@ describe('seed cleanup and MVP fixtures', { skip: !ENABLED && 'set SEED_TEST=1 w
 
   test('a clean removes every seed tier and leaves the protected cast intact', async () => {
     const { removed, after } = await cleanSeedData();
-      assert.ok(removed.opportunities >= 20, 'seed opportunities removed');
+      assert.ok(removed.opportunities >= MVP_FIXTURES.length, 'seed opportunities removed');
     assert.equal(after.opportunities, 0, 'no seed opportunities remain');
     assert.equal(after.seedUsers, 0, 'no non-protected seed users remain');
     assert.equal(after.seedMemberships, 0, 'no seed memberships remain');
@@ -89,8 +89,8 @@ describe('seed cleanup and MVP fixtures', { skip: !ENABLED && 'set SEED_TEST=1 w
 
   test('a re-load after a clean restores the fixtures deterministically', async () => {
     const out = await seedMvpData({ force: true });
-    assert.equal(out.created, 20);
+    assert.equal(out.created, MVP_FIXTURES.length);
     const c = await counts();
-    assert.equal(c.opps, 20);
+    assert.equal(c.opps, MVP_FIXTURES.length);
   });
 });

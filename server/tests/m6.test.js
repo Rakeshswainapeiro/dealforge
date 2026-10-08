@@ -213,14 +213,15 @@ describe('rate limiting (E10.1)', () => {
   test('a limited route reports its budget and eventually returns 429', async (t) => {
     if (!online) return t.skip('server offline');
     if (process.env.RATE_LIMIT_DISABLED === '1') return t.skip('rate limiting disabled');
-    // The limiter is keyed by actor, so a dedicated probe user gets a clean
-    // budget. Read the advertised ceiling from the first response, then drive a
+    // The limiter is keyed by actor, so a seeded user no other suite uploads
+    // with gets a clean budget (an unknown user is now refused with 401 before
+    // any limiter runs). Read the advertised ceiling from the first response, then drive a
     // little past it, so the assertion holds whatever maximum the run sets.
     let limited = null;
     let ceiling = 30;
     for (let i = 0; i < 400; i += 1) {
       const res = await api('/api/integrations/upload-file', {
-        method: 'POST', user: 'user-m6-ratelimit',
+        method: 'POST', user: 'user-reviewer',
         form: uploadForm('probe.exe', 'MZ', 'application/octet-stream'),
       });
       if (res.status === 429) { limited = res; break; }
