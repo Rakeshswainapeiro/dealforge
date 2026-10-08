@@ -35,7 +35,6 @@ services:
       DATABASE_URL: postgres://dealforge:dealforge@db:5432/dealforge
       UPLOAD_DIR: /app/uploads
       PUBLIC_BASE_URL: http://localhost:34010
-      NOTIFY_BASE_URL: http://127.0.0.1:3001
       API_RATE_LIMIT_MAX: "600"
       RATE_LIMIT_DISABLED: "0"
       # W1-11/W1-12: load the deterministic MVP sample set (base reference data

@@ -235,12 +235,15 @@ is skipped.
 | `AUTH_TRUSTED_ORIGINS` | Extra browser origins allowed to start a session (comma-separated) |
 | `CORS_ALLOWED_ORIGINS` | Extra browser origins allowed by CORS (comma-separated); `PUBLIC_BASE_URL` is always allowed |
 | `AUTH_ALLOW_HEADER_IDENTITY` | **Local testing only.** `1` lets tests act as users via `x-user-id` / `x-user-email`; refused in production. Default `0`: no session means 401 |
-| `NODE_ENV` | `production` (image default) enables strict startup checks: real secret, https `PUBLIC_BASE_URL`, no test switches. Local compose files set `development` |
+| `NODE_ENV` | `production` (image default) enables strict startup checks: real secret, https `PUBLIC_BASE_URL`, no test switches, no sample data, MFA enforced, data residency. See `docs/PRODUCTION.md`. Local compose files set `development` |
 | `FEATURE_FLAGS` | Deployment-time feature/menu visibility (comma list of page keys; `-pageKey` disables) |
 | `OPENAI_BASE_URL` | OpenAI-compatible base URL, e.g. `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | Provider API key |
 | `OPENAI_MODEL` | Model name (default `gpt-4o-mini`) |
-| `RESEND_API_KEY` | Optional; enables real email delivery via Resend |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Email through the designated SMTP relay; without `SMTP_HOST` email is logged only |
+| `TRUST_PROXY` | Proxy hops trusted for the client address (default 1 in production, loopback otherwise) |
+| `DB_MIGRATE_ON_BOOT` | `0` when the app runs as the least-privilege role; run `npm --prefix server run migrate` as the owner instead |
+| `RESIDENCY_SIGNOFF` | `1` only after Sirius IT signs off a processor that is not pinned to an approved region |
 | `PUBLIC_BASE_URL` | Public URL used to build absolute upload links |
 | `UPLOAD_DIR` | Where uploaded files are stored when object storage is off (default `./uploads`) |
 | `S3_ENDPOINT` | ObjectIO/S3 endpoint (e.g. `http://objectio:9000`); empty = local disk |
