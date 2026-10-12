@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server/index.js",
+    "server:dev": "node --watch server/index.js",
     "test:server": "node --test server/tests/*.test.js"
   },
   "dependencies": {

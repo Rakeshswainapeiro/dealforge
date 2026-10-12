@@ -712,8 +712,12 @@ function CreateUserDialog({ roles, onDone }) {
   );
 }
 
-function ManageUserDialog({ user, roles, orgs, onClose }) {
+function ManageUserDialog({ user: initialUser, roles, orgs, onClose }) {
   const qc = useQueryClient();
+  // The `user` prop is a snapshot from when the dialog opened. Keep fields this dialog
+  // changes in local state so the UI reflects them without closing and reopening.
+  const [banned, setBanned] = useState(Boolean(initialUser.banned));
+  const user = { ...initialUser, banned };
   const [tab, setTab] = useState('profile');
   const [profile, setProfile] = useState({
     full_name: user.full_name || '',
@@ -747,7 +751,10 @@ function ManageUserDialog({ user, roles, orgs, onClose }) {
   });
   const toggleBan = useMutation({
     mutationFn: () => api.admin.banUser(user.id, { banned: !user.banned, reason: user.banned ? undefined : 'Disabled by super admin' }),
-    onSuccess: () => onOk(user.banned ? 'User unbanned.' : 'User banned and sessions revoked.'),
+    onSuccess: () => {
+      onOk(user.banned ? 'User unbanned.' : 'User banned and sessions revoked.');
+      setBanned((value) => !value);
+    },
     onError,
   });
   const deactivate = useMutation({
