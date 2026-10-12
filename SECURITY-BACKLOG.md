@@ -21,3 +21,4 @@ Found during the local platform setup (2026-10-12). Fixed items are listed for t
 | 7 | OpenAI, Resend, Coneshare send data outside the UAE | Data-residency decision needed from Sirius | High (before real data) |
 | 8 | Password login available to all users | Restrict to the break-glass admin with MFA in production | High (before production) |
 | 9 | `BETTER_AUTH_SECRET` was shared in chat | Rotate before any shared environment | Before sharing |
+| 10 | Failed SSO audit entries all say `sso_callback_failed` | Record the actual reason (no account, provider error, cancelled) for investigations | Low |
