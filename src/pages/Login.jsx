@@ -22,7 +22,12 @@ const DEFAULT_SIGN_IN_ERROR = 'We could not sign you in. Try again, or contact y
 
 function signInErrorFromUrl() {
   const code = new URLSearchParams(window.location.search).get('error');
-  return code ? SIGN_IN_ERRORS[code] || DEFAULT_SIGN_IN_ERROR : null;
+  if (!code) return null;
+  if (SIGN_IN_ERRORS[code]) return SIGN_IN_ERRORS[code];
+  // Unknown code: show the generic message plus the code as a support reference, but only
+  // when it looks like a plain error code, so arbitrary text from the URL is never shown.
+  const reference = /^[a-z0-9_ ]{1,40}$/i.test(code) ? ` (Reference: ${code})` : '';
+  return DEFAULT_SIGN_IN_ERROR + reference;
 }
 
 function MicrosoftLogo() {
