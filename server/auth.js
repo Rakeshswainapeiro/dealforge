@@ -178,7 +178,8 @@ export const auth = betterAuth({
   secret: authSecret(),
   basePath: AUTH_BASE_PATH,
   trustedOrigins: authTrustedOrigins(),
-  emailAndPassword: { enabled: true },
+  // Accounts are created by admins/seeds or SSO, never by public self-registration.
+  emailAndPassword: { enabled: true, disableSignUp: true },
   session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
   ...(authRateLimit() ? { rateLimit: authRateLimit() } : {}),
   advanced: { database: { validateSchema: false } },
@@ -265,7 +266,8 @@ export const auth = betterAuth({
         organizationRole: { modelName: 'auth_org_role' },
       },
     }),
-    admin({ defaultRole: 'admin' }),
+    // New users (sign-up or first SSO login) must never be admins. Admin is granted explicitly.
+    admin({ defaultRole: 'user' }),
     twoFactor({ issuer: 'DealForge', twoFactorTable: 'twoFactor' }),
     sso({ defaultSSO: ssoBootstrapProviders() }),
   ],
