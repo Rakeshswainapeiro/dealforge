@@ -111,7 +111,7 @@ const SECTION_TITLES = {
 const FIELD_TYPES = new Set(["text", "number", "select", "textarea"]);
 
 function emptyForm(ownerEmail) {
-  return { owner_email: ownerEmail || "" };
+  return { owner_email: ownerEmail || "", valuation_comparables: toComparablesForm([]) };
 }
 
 function toForm(record, allFields) {
