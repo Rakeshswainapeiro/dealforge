@@ -236,6 +236,16 @@ export const auth = betterAuth({
               orgId: null,
               after: { method, two_factor_enabled: Boolean(user.twoFactorEnabled), path },
             });
+          } else if (path === '/sso/callback' || path.startsWith('/sso/callback/')) {
+            // Failed SSO sign-in (no DealForge account, cancelled at the identity provider, ...).
+            // Recorded so "every sign-in, successful or not" holds for SSO too. The provider's
+            // email is not trusted on a failed callback, so it is not stored.
+            await writeAudit({
+              entity: 'auth',
+              action: 'sign_in_failed',
+              actor: null,
+              after: { method: 'sso', path, reason: 'sso_callback_failed' },
+            });
           } else if (path === '/sign-in/email') {
             // No session and no user: the credentials were rejected. Either the
             // email was unknown or the password was wrong; the attempt is
@@ -284,7 +294,9 @@ export const auth = betterAuth({
     // Providers configured in code/env are treated as domain-verified, so a first
     // sign-in links to the existing account when the email domain is in the provider's
     // domain list. Providers added at runtime must prove domain ownership via DNS first.
-    sso({ defaultSSO: ssoBootstrapProviders(), domainVerification: { enabled: true } }),
+    // DealForge accounts are created by administrators; a Microsoft account alone never
+    // creates one. Unknown users are sent back with error=signup disabled.
+    sso({ defaultSSO: ssoBootstrapProviders(), domainVerification: { enabled: true }, disableImplicitSignUp: true }),
   ],
 });
 

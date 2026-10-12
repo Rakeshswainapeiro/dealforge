@@ -433,12 +433,12 @@ const auth = {
 
   // Sign in with a named SSO provider. Everyone is in one Microsoft tenant, so the
   // user is not asked for an email first; the identity provider shows its own sign-in.
-  async loginWithProvider(providerId, callbackURL = '/') {
+  async loginWithProvider(providerId, callbackURL = '/', errorCallbackURL = '/') {
     const res = await fetch(API_BASE + '/api/auth/sign-in/sso', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ providerId, callbackURL }),
+      body: JSON.stringify({ providerId, callbackURL, errorCallbackURL }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
