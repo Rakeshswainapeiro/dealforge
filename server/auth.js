@@ -180,9 +180,21 @@ export const auth = betterAuth({
   trustedOrigins: authTrustedOrigins(),
   // Accounts are created by admins/seeds or SSO, never by public self-registration.
   emailAndPassword: { enabled: true, disableSignUp: true },
+  // Everyone signs in through one Microsoft (Entra) tenant whose admins control email
+  // addresses, so a first SSO sign-in may attach to the existing account with the same
+  // verified email. Only this provider is trusted for that.
+  // SSO linking rules (Better Auth's SSO plugin ignores `trustedProviders`; it trusts a
+  // provider only via domain verification, see the sso() options below).
+  // Accounts are created only by admins/seeds (public sign-up is disabled), so an
+  // existing account does not need a separately verified email before a first SSO
+  // sign-in attaches to it.
+  account: {
+    accountLinking: { enabled: true, requireLocalEmailVerified: false },
+  },
   session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
   ...(authRateLimit() ? { rateLimit: authRateLimit() } : {}),
   advanced: { database: { validateSchema: false } },
+
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
       try {
@@ -269,7 +281,10 @@ export const auth = betterAuth({
     // New users (sign-up or first SSO login) must never be admins. Admin is granted explicitly.
     admin({ defaultRole: 'user' }),
     twoFactor({ issuer: 'DealForge', twoFactorTable: 'twoFactor' }),
-    sso({ defaultSSO: ssoBootstrapProviders() }),
+    // Providers configured in code/env are treated as domain-verified, so a first
+    // sign-in links to the existing account when the email domain is in the provider's
+    // domain list. Providers added at runtime must prove domain ownership via DNS first.
+    sso({ defaultSSO: ssoBootstrapProviders(), domainVerification: { enabled: true } }),
   ],
 });
 

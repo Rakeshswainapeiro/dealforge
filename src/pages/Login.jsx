@@ -6,9 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
-// Session-backed sign-in screen. Authentication is provided by Better Auth
-// (email + password); a successful sign-in sets the session cookie and the
-// app then resolves the actor from /api/org/me.
+// Primary sign-in is the organisation's Microsoft account (one tenant for everyone),
+// so there is no email step: the identity provider shows its own sign-in page.
+// Email + password stays only for break-glass / approved local accounts, behind a link.
+const SSO_PROVIDER_ID = import.meta.env.VITE_SSO_PROVIDER_ID || 'microsoft';
+const SSO_PROVIDER_LABEL = import.meta.env.VITE_SSO_PROVIDER_LABEL || 'Microsoft';
+
 export default function Login() {
   const { login, appPublicSettings } = useAuth();
   const [email, setEmail] = useState('');
@@ -16,6 +19,7 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [ssoSubmitting, setSsoSubmitting] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
 
   const appName = appPublicSettings?.public_settings?.appName || 'DealForge';
 
@@ -33,25 +37,21 @@ export default function Login() {
     }
   };
 
-  // Single sign-on (W8-01 / PLT-04): resolve the email domain to a registered
-  // provider and hand the browser to the IdP. Accounts on an approved domain
-  // can still use the password form below.
+  // Single sign-on (W8-01 / PLT-04): hand the browser straight to the configured provider.
   const onSso = async () => {
     setError(null);
-    if (!email.trim()) {
-      setError('Enter your work email to continue with single sign-on.');
-      return;
-    }
     setSsoSubmitting(true);
     try {
-      const url = await api.auth.loginWithSso(email.trim(), '/');
-      if (url) window.location.assign(url);
-      else setError('Single sign-on is not available for this account.');
+      const url = await api.auth.loginWithProvider(SSO_PROVIDER_ID, '/');
+      if (url) {
+        window.location.assign(url);
+        return;
+      }
+      setError('Single sign-on is not available right now.');
     } catch (err) {
-      setError(err?.message || 'Single sign-on is not available for this account');
-    } finally {
-      setSsoSubmitting(false);
+      setError(err?.message || 'Single sign-on is not available right now.');
     }
+    setSsoSubmitting(false);
   };
 
   return (
@@ -64,49 +64,61 @@ export default function Login() {
           </div>
           <CardDescription>Sign in to continue to the deal platform.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.local"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                required
-              />
-            </div>
-            {error ? (
-              <p className="text-sm text-red-600" role="alert">{error}</p>
-            ) : null}
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? 'Signing in...' : 'Sign in'}
-            </Button>
-            <Button
+        <CardContent className="space-y-4">
+          <Button
+            type="button"
+            className="w-full"
+            data-testid="login-sso"
+            disabled={ssoSubmitting}
+            onClick={onSso}
+          >
+            {ssoSubmitting ? 'Redirecting…' : `Sign in with ${SSO_PROVIDER_LABEL}`}
+          </Button>
+
+          {error ? (
+            <p className="text-sm text-red-600" role="alert">{error}</p>
+          ) : null}
+
+          {showPasswordForm ? (
+            <form onSubmit={onSubmit} className="space-y-4 border-t pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  autoComplete="username"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.local"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                />
+              </div>
+              <Button type="submit" variant="outline" className="w-full" disabled={submitting}>
+                {submitting ? 'Signing in...' : 'Sign in with password'}
+              </Button>
+            </form>
+          ) : (
+            <button
               type="button"
-              variant="outline"
-              className="w-full"
-              data-testid="login-sso"
-              disabled={ssoSubmitting}
-              onClick={onSso}
+              data-testid="login-show-password"
+              className="w-full text-center text-sm text-slate-500 hover:text-slate-800 hover:underline underline-offset-4"
+              onClick={() => { setError(null); setShowPasswordForm(true); }}
             >
-              {ssoSubmitting ? 'Redirecting…' : 'Sign in with SSO'}
-            </Button>
-          </form>
+              Sign in with email and password instead
+            </button>
+          )}
         </CardContent>
       </Card>
     </div>

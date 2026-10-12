@@ -431,6 +431,24 @@ const auth = {
     return data?.url || null;
   },
 
+  // Sign in with a named SSO provider. Everyone is in one Microsoft tenant, so the
+  // user is not asked for an email first; the identity provider shows its own sign-in.
+  async loginWithProvider(providerId, callbackURL = '/') {
+    const res = await fetch(API_BASE + '/api/auth/sign-in/sso', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ providerId, callbackURL }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = new Error(data?.message || data?.error || 'Single sign-on is not available right now');
+      error.status = res.status;
+      throw error;
+    }
+    return data?.url || null;
+  },
+
   redirectToLogin() {
     return true;
   },
