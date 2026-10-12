@@ -717,7 +717,8 @@ function ManageUserDialog({ user: initialUser, roles, orgs, onClose }) {
   // The `user` prop is a snapshot from when the dialog opened. Keep fields this dialog
   // changes in local state so the UI reflects them without closing and reopening.
   const [banned, setBanned] = useState(Boolean(initialUser.banned));
-  const user = { ...initialUser, banned };
+  const [isActive, setIsActive] = useState(initialUser.is_active !== false);
+  const user = { ...initialUser, banned, is_active: isActive };
   const [tab, setTab] = useState('profile');
   const [profile, setProfile] = useState({
     full_name: user.full_name || '',
@@ -759,12 +760,18 @@ function ManageUserDialog({ user: initialUser, roles, orgs, onClose }) {
   });
   const deactivate = useMutation({
     mutationFn: () => api.admin.deactivateUser(user.id),
-    onSuccess: (r) => onOk('User deactivated. ' + (r?.revoked_sessions || 0) + ' session(s) revoked.'),
+    onSuccess: (r) => {
+      onOk('User deactivated. ' + (r?.revoked_sessions || 0) + ' session(s) revoked.');
+      setIsActive(false);
+    },
     onError,
   });
   const reactivate = useMutation({
     mutationFn: () => api.admin.reactivateUser(user.id),
-    onSuccess: () => onOk('User reactivated. They must sign in again.'),
+    onSuccess: () => {
+      onOk('User reactivated. They must sign in again.');
+      setIsActive(true);
+    },
     onError,
   });
   const addMembership = useMutation({
