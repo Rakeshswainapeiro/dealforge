@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   ClipboardCheck,
   FileText,
@@ -104,6 +106,25 @@ const SECTION_TITLES = {
   risks: "6. Risks & compliance",
   accretion: "Accretion statement (§3.3)",
   documents: "Documents",
+};
+
+// The capture form is a seven-step wizard. Each step shows one or more of the
+// server-defined sections; the sections themselves, their fields and the gate
+// are unchanged. A section the server adds later that is not listed here lands
+// on the last step so no field is ever hidden.
+const CAPTURE_TABS = [
+  { key: "executive_summary", label: "Executive summary", sections: ["header", "executive_summary"] },
+  { key: "opportunity_overview", label: "Opportunity overview", sections: ["opportunity_overview"] },
+  { key: "rationale", label: "Rationale and fit", sections: ["rationale"] },
+  { key: "financials", label: "Financials and returns", sections: ["financials", "accretion"] },
+  { key: "funding", label: "Funding and key asks", sections: ["funding"] },
+  { key: "risks", label: "Risks and compliance", sections: ["risks"] },
+  { key: "documents", label: "Documents and send", sections: ["documents"] },
+];
+const LAST_TAB = CAPTURE_TABS.length - 1;
+const tabIndexForSection = (section) => {
+  const index = CAPTURE_TABS.findIndex((tab) => tab.sections.includes(section));
+  return index === -1 ? LAST_TAB : index;
 };
 
 // Field input types the form renders inline (arrays such as the risk register
@@ -361,6 +382,12 @@ export default function SubmitOpportunity() {
   const [submitResult, setSubmitResult] = useState(null);
   const [blockedGate, setBlockedGate] = useState(null);
   const [blockedMessage, setBlockedMessage] = useState(null);
+  const [activeTab, setActiveTab] = useState(0);
+  // The capture form is its own full-page view (?view=capture) so Back and a
+  // refresh behave; the self-screen and the list stay on the plain page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openCapture = () => setSearchParams({ view: "capture" });
+  const closeCapture = () => setSearchParams({});
   const [pendingDelete, setPendingDelete] = useState(null);
   // Pre-form self-screen (W1-01 / INT-02): six questions answered before the
   // capture form opens. A hard stop halts the flow; flags are carried forward.
@@ -756,22 +783,27 @@ export default function SubmitOpportunity() {
     }
     setForm((prev) => ({ ...prev, ...seeds }));
     setScreenOpen(false);
+    openCapture();
   };
 
   const startNew = () => {
     setSelectedId(null);
     setForm(emptyForm(currentUser?.email));
+    setActiveTab(0);
     setSubmitResult(null);
     setBlockedGate(null);
     setBlockedMessage(null);
+    if (!screenOpen) openCapture();
   };
 
   const selectOpportunity = (opportunity) => {
     setSelectedId(opportunity.id);
     setForm({ ...toForm(opportunity, allFields), status: opportunity.status || DRAFT_STATUS });
+    setActiveTab(0);
     setSubmitResult(null);
     setBlockedGate(null);
     setBlockedMessage(null);
+    openCapture();
   };
 
   const handleChange = (key, value) => {
@@ -810,10 +842,24 @@ export default function SubmitOpportunity() {
     });
   };
 
-  const handleSave = () => {
+  const saveDraft = (options) => {
     const payload = buildPayload(form, allFields);
     if (!payload.owner_email) payload.owner_email = currentUser?.email || "";
-    saveMutation.mutate(payload);
+    saveMutation.mutate(payload, options);
+  };
+
+  const handleSave = () => saveDraft();
+
+  // Save and Continue: the same save as "Save as draft" (update when the record
+  // exists, create once otherwise), then move on only if it succeeded. A locked
+  // record cannot be saved, so it just navigates.
+  const goToTab = (index) => setActiveTab(Math.max(0, Math.min(LAST_TAB, index)));
+  const handleSaveAndContinue = () => {
+    if (!editable) {
+      goToTab(activeTab + 1);
+      return;
+    }
+    saveDraft({ onSuccess: () => goToTab(activeTab + 1) });
   };
 
   const handleSubmit = () => {
@@ -850,6 +896,47 @@ export default function SubmitOpportunity() {
     });
     return groups;
   }, [blockedGate]);
+
+  // Missing items per wizard step, from the live gate, so each tab can show what
+  // is still outstanding. Only meaningful once the record exists.
+  const missingByTab = useMemo(() => {
+    const counts = CAPTURE_TABS.map(() => 0);
+    (gate?.missing || []).forEach((item) => {
+      counts[tabIndexForSection(item.section || "documents")] += 1;
+    });
+    return counts;
+  }, [gate]);
+
+  // The capture view needs the self-screen to be done (or an existing record);
+  // a direct link to ?view=capture before that falls back to the plain page.
+  const captureView = searchParams.get("view") === "capture" && (!screenOpen || Boolean(selectedId));
+
+  // Per-step progress for the right-hand rail, from the same gate sections the
+  // per-section bars use.
+  const progressByTab = useMemo(
+    () =>
+      CAPTURE_TABS.map((tab) => {
+        let present = 0;
+        let total = 0;
+        tab.sections.forEach((key) => {
+          const section = sectionProgressByKey.get(key);
+          if (section) {
+            present += section.present;
+            total += section.total;
+          }
+        });
+        return { present, total };
+      }),
+    [sectionProgressByKey]
+  );
+  const itemsLeft = progressByTab.reduce((sum, tab) => sum + (tab.total - tab.present), 0);
+
+  // A blocked submit jumps to the first step that has something missing.
+  useEffect(() => {
+    const sections = Object.keys(blockedGroups).filter((section) => blockedGroups[section].length > 0);
+    if (sections.length === 0) return;
+    setActiveTab(Math.min(...sections.map(tabIndexForSection)));
+  }, [blockedGroups]);
 
   const renderField = (field) => {
     if (field.type === "textarea") {
@@ -2587,7 +2674,17 @@ export default function SubmitOpportunity() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        {captureView && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
+            onClick={closeCapture}
+            data-testid="capture-back-to-list"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Submit Opportunity
+          </button>
+        )}
+        <div className={cn("flex flex-wrap items-start justify-between gap-4", captureView && "hidden")}>
           <div>
             <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
               <div className="w-12 h-12 bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl flex items-center justify-center">
@@ -2608,7 +2705,7 @@ export default function SubmitOpportunity() {
         {/* Pre-form self-screen (W1-01 / INT-02) ------------------------------- */}
         {(!selectedId || (gate?.self_screen && gate.self_screen.decision !== "pass")) && (
           <Card
-            className="border-slate-200 shadow-sm"
+            className={cn("border-slate-200 shadow-sm", captureView && "hidden")}
             data-testid="self-screen"
             data-screen-decision={screenResult?.decision || "pending"}
           >
@@ -2881,211 +2978,9 @@ export default function SubmitOpportunity() {
           </Alert>
         )}
 
-        {/* Qualifying gates (W1-05 / INT-08) ---------------------------------- */}
-        {selectedId && gate?.qualifying_gates && (
-          <Card className="border-slate-200 shadow-sm" data-testid="qualifying-gates">
-            <CardHeader className="border-b border-slate-100">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <ClipboardCheck className="w-5 h-5 text-teal-600" />
-                  Ten qualifying gates
-                </CardTitle>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "font-medium",
-                    gate.qualifying_gates.complete
-                      ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                      : "bg-amber-100 text-amber-800 border-amber-200"
-                  )}
-                  data-testid="qualifying-gates-status"
-                >
-                  {gate.qualifying_gates.complete
-                    ? "All ten ready"
-                    : `${gate.qualifying_gates.blocking.length} gate(s) blocking`}
-                </Badge>
-              </div>
-              <CardDescription>
-                Every gate needs a <span className="font-medium">Yes</span> and its linked evidence. A No on any gate
-                blocks submission with the not-ready message.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              {gate.qualifying_gates.blocking.length > 0 && (
-                <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="qualifying-gates-blocked">
-                  <AlertTriangle className="h-4 w-4 text-red-600" />
-                  <AlertTitle className="text-red-900">Not ready</AlertTitle>
-                  <AlertDescription className="text-red-900">
-                    {gate.qualifying_gates.message}
-                  </AlertDescription>
-                </Alert>
-              )}
-              <div className="grid md:grid-cols-2 gap-4">
-                {gate.qualifying_gates.gates.map((g) => (
-                  <div
-                    key={g.key}
-                    className={cn(
-                      "rounded-lg border p-4 space-y-3",
-                      g.ready ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
-                    )}
-                    data-testid={`qualifying-gate-${g.key}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-medium text-slate-900 flex items-center gap-2">
-                          {g.ready ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                          )}
-                          {g.number}. {g.label}
-                        </p>
-                        <p className="text-sm text-slate-600 mt-1">{g.question}</p>
-                      </div>
-                      <Select
-                        value={form[g.answer_key] || g.answer || ""}
-                        onValueChange={(value) => handleChange(g.answer_key, value)}
-                      >
-                        <SelectTrigger id={g.answer_key} className="w-24 shrink-0">
-                          <SelectValue placeholder="—" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">Yes</SelectItem>
-                          <SelectItem value="no">No</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <ul className="space-y-1">
-                      {g.evidence.map((e) => (
-                        <li key={e.key} className="flex items-center gap-2 text-xs">
-                          {e.present ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          ) : (
-                            <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                          )}
-                          <span className={e.present ? "text-slate-600" : "text-slate-900 font-medium"}>
-                            Evidence: {e.label}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                    {!g.ready && g.reason && (
-                      <p className="text-xs text-amber-800">{g.reason}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* CEO + CFO attestation gate (W1-06 / INT-09) ----------------------- */}
-        {selectedId && gate?.attestations && (
-          <Card className="border-slate-200 shadow-sm" data-testid="attestations">
-            <CardHeader className="border-b border-slate-100">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <ShieldCheck className="w-5 h-5 text-teal-600" />
-                  CEO &amp; CFO attestation
-                </CardTitle>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "font-medium",
-                    gate.attestations.complete
-                      ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                      : "bg-amber-100 text-amber-800 border-amber-200"
-                  )}
-                  data-testid="attestations-status"
-                >
-                  {gate.attestations.complete
-                    ? "Both recorded"
-                    : `${gate.attestations.missing.length} outstanding`}
-                </Badge>
-              </div>
-              <CardDescription>
-                Two named attestations are required before submission. Each records the person,
-                the timestamp and the IP, and each is written to the audit log.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              {!gate.attestations.complete && (
-                <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="attestations-blocked">
-                  <AlertTriangle className="h-4 w-4 text-red-600" />
-                  <AlertTitle className="text-red-900">Not ready</AlertTitle>
-                  <AlertDescription className="text-red-900">
-                    {gate.attestations.message}
-                  </AlertDescription>
-                </Alert>
-              )}
-              <div className="grid md:grid-cols-2 gap-4">
-                {gate.attestations.roles.map((a) => {
-                  const canSignThis =
-                    !a.attested &&
-                    ((currentUser?.roles || []).includes(a.role) || (currentUser?.roles || []).includes("admin"));
-                  return (
-                    <div
-                      key={a.key}
-                      className={cn(
-                        "rounded-lg border p-4 space-y-3",
-                        a.attested ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
-                      )}
-                      data-testid={`attestation-${a.key}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="font-medium text-slate-900 flex items-center gap-2">
-                          {a.attested ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                          )}
-                          {a.label}
-                        </p>
-                        {a.attested && (
-                          <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                            Recorded
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-slate-600 italic">“{a.text}”</p>
-                      {a.attested ? (
-                        <p className="text-xs text-slate-500" data-testid={`attestation-${a.key}-meta`}>
-                          Signed by {a.record.name || a.record.by} on {formatDateTime(a.record.at)}
-                          {a.record.ip ? ` from ${a.record.ip}` : ""}.
-                        </p>
-                      ) : (
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-2 bg-teal-600 hover:bg-teal-700"
-                          disabled={!canSignThis || attestMutation.isPending}
-                          onClick={() => attestMutation.mutate(a.key)}
-                          data-testid={`attestation-${a.key}-sign`}
-                        >
-                          {attestMutation.isPending && attestMutation.variables === a.key ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <PenLine className="w-4 h-4" />
-                          )}
-                          Record my attestation
-                        </Button>
-                      )}
-                      {!a.attested && !canSignThis && (
-                        <p className="text-xs text-slate-500">
-                          Only the {a.label} for this subsidiary can record this attestation.
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Opportunities list -------------------------------------------------- */}
-          <div className="lg:col-span-1 space-y-4">
+          <div className={cn("space-y-4", captureView ? "hidden" : "lg:col-span-3")}>
             <Card className="border-slate-200 shadow-sm">
               <CardHeader className="border-b border-slate-100">
                 <CardTitle className="flex items-center gap-2 text-lg">
@@ -3143,7 +3038,8 @@ export default function SubmitOpportunity() {
           </div>
 
           {/* Capture + gate ------------------------------------------------------ */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className={captureView ? "lg:col-span-3 grid lg:grid-cols-[minmax(0,1fr)_220px] gap-6 items-start" : "hidden"}>
+            <div className="space-y-6 min-w-0">
             {screenOpen && !selectedId ? (
               <Card className="border-dashed border-slate-300 bg-white/70 shadow-sm" data-testid="capture-locked">
                 <CardContent className="p-8 text-center space-y-2">
@@ -3166,12 +3062,49 @@ export default function SubmitOpportunity() {
                   {renderStatusBadge(form.status || DRAFT_STATUS)}
                 </div>
                 <CardDescription>
-                  Saved as a <span className="font-medium text-slate-700">draft</span> until it passes the gate.
+                  Step {activeTab + 1} of {CAPTURE_TABS.length}. Saved as a <span className="font-medium text-slate-700">draft</span> until it passes the gate.
                 </CardDescription>
               </CardHeader>
+              <div
+                role="tablist"
+                aria-label="Opportunity sections"
+                className="flex gap-1 overflow-x-auto border-b border-slate-100 px-4"
+                data-testid="capture-tabs"
+              >
+                {CAPTURE_TABS.map((tab, index) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === index}
+                    data-testid={`capture-tab-${tab.key}`}
+                    onClick={() => setActiveTab(index)}
+                    className={cn(
+                      "flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-3 text-sm transition-colors",
+                      activeTab === index
+                        ? "border-teal-600 font-semibold text-teal-700"
+                        : "border-transparent text-slate-500 hover:text-slate-800"
+                    )}
+                  >
+                    {tab.label}
+                    {selectedId && missingByTab[index] > 0 && (
+                      <span
+                        className="rounded-full bg-red-100 px-1.5 text-[11px] font-medium text-red-700"
+                        title={`${missingByTab[index]} item(s) missing`}
+                        data-testid={`capture-tab-missing-${tab.key}`}
+                      >
+                        {missingByTab[index]}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
               <CardContent className="p-6 space-y-6">
                 {fieldGroups.map((group) => (
-                  <div key={group.key} className="space-y-4">
+                  <div
+                    key={group.key}
+                    className={cn("space-y-4", tabIndexForSection(group.key) !== activeTab && "hidden")}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
                         <h3 className="font-semibold text-slate-900">
@@ -3277,6 +3210,7 @@ export default function SubmitOpportunity() {
                   </div>
                 ))}
 
+                <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
                 <Separator />
 
                 <div className="grid md:grid-cols-2 gap-4">
@@ -3350,6 +3284,29 @@ export default function SubmitOpportunity() {
                   )}
                   {!selectedId && (
                     <span className="text-sm text-slate-500">Save the draft first to unlock the gate checklist.</span>
+                  )}
+                </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4" data-testid="capture-footer">
+                  <Button
+                    variant="outline"
+                    disabled={activeTab === 0}
+                    onClick={() => goToTab(activeTab - 1)}
+                    data-testid="capture-back"
+                  >
+                    Back
+                  </Button>
+                  {activeTab < LAST_TAB && (
+                    <Button
+                      className="bg-teal-600 hover:bg-teal-700 gap-2"
+                      disabled={busy}
+                      onClick={handleSaveAndContinue}
+                      data-testid="capture-save-continue"
+                    >
+                      {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Save and Continue
+                    </Button>
                   )}
                 </div>
               </CardContent>
@@ -3472,8 +3429,212 @@ export default function SubmitOpportunity() {
               </Alert>
             )}
 
+            <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
+            {/* Qualifying gates (W1-05 / INT-08) ---------------------------------- */}
+            {selectedId && gate?.qualifying_gates && (
+              <Card className="border-slate-200 shadow-sm" data-testid="qualifying-gates">
+                <CardHeader className="border-b border-slate-100">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <ClipboardCheck className="w-5 h-5 text-teal-600" />
+                      Ten qualifying gates
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "font-medium",
+                        gate.qualifying_gates.complete
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                          : "bg-amber-100 text-amber-800 border-amber-200"
+                      )}
+                      data-testid="qualifying-gates-status"
+                    >
+                      {gate.qualifying_gates.complete
+                        ? "All ten ready"
+                        : `${gate.qualifying_gates.blocking.length} gate(s) blocking`}
+                    </Badge>
+                  </div>
+                  <CardDescription>
+                    Every gate needs a <span className="font-medium">Yes</span> and its linked evidence. A No on any gate
+                    blocks submission with the not-ready message.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-6 space-y-4">
+                  {gate.qualifying_gates.blocking.length > 0 && (
+                    <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="qualifying-gates-blocked">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <AlertTitle className="text-red-900">Not ready</AlertTitle>
+                      <AlertDescription className="text-red-900">
+                        {gate.qualifying_gates.message}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {gate.qualifying_gates.gates.map((g) => (
+                      <div
+                        key={g.key}
+                        className={cn(
+                          "rounded-lg border p-4 space-y-3",
+                          g.ready ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
+                        )}
+                        data-testid={`qualifying-gate-${g.key}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900 flex items-center gap-2">
+                              {g.ready ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                              ) : (
+                                <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                              )}
+                              {g.number}. {g.label}
+                            </p>
+                            <p className="text-sm text-slate-600 mt-1">{g.question}</p>
+                          </div>
+                          <Select
+                            value={form[g.answer_key] || g.answer || ""}
+                            onValueChange={(value) => handleChange(g.answer_key, value)}
+                          >
+                            <SelectTrigger id={g.answer_key} className="w-24 shrink-0">
+                              <SelectValue placeholder="—" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="yes">Yes</SelectItem>
+                              <SelectItem value="no">No</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <ul className="space-y-1">
+                          {g.evidence.map((e) => (
+                            <li key={e.key} className="flex items-center gap-2 text-xs">
+                              {e.present ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              ) : (
+                                <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                              )}
+                              <span className={e.present ? "text-slate-600" : "text-slate-900 font-medium"}>
+                                Evidence: {e.label}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        {!g.ready && g.reason && (
+                          <p className="text-xs text-amber-800">{g.reason}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* CEO + CFO attestation gate (W1-06 / INT-09) ----------------------- */}
+            {selectedId && gate?.attestations && (
+              <Card className="border-slate-200 shadow-sm" data-testid="attestations">
+                <CardHeader className="border-b border-slate-100">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <ShieldCheck className="w-5 h-5 text-teal-600" />
+                      CEO &amp; CFO attestation
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "font-medium",
+                        gate.attestations.complete
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                          : "bg-amber-100 text-amber-800 border-amber-200"
+                      )}
+                      data-testid="attestations-status"
+                    >
+                      {gate.attestations.complete
+                        ? "Both recorded"
+                        : `${gate.attestations.missing.length} outstanding`}
+                    </Badge>
+                  </div>
+                  <CardDescription>
+                    Two named attestations are required before submission. Each records the person,
+                    the timestamp and the IP, and each is written to the audit log.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-6 space-y-4">
+                  {!gate.attestations.complete && (
+                    <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="attestations-blocked">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <AlertTitle className="text-red-900">Not ready</AlertTitle>
+                      <AlertDescription className="text-red-900">
+                        {gate.attestations.message}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {gate.attestations.roles.map((a) => {
+                      const canSignThis =
+                        !a.attested &&
+                        ((currentUser?.roles || []).includes(a.role) || (currentUser?.roles || []).includes("admin"));
+                      return (
+                        <div
+                          key={a.key}
+                          className={cn(
+                            "rounded-lg border p-4 space-y-3",
+                            a.attested ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
+                          )}
+                          data-testid={`attestation-${a.key}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="font-medium text-slate-900 flex items-center gap-2">
+                              {a.attested ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                              ) : (
+                                <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                              )}
+                              {a.label}
+                            </p>
+                            {a.attested && (
+                              <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                                Recorded
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-slate-600 italic">“{a.text}”</p>
+                          {a.attested ? (
+                            <p className="text-xs text-slate-500" data-testid={`attestation-${a.key}-meta`}>
+                              Signed by {a.record.name || a.record.by} on {formatDateTime(a.record.at)}
+                              {a.record.ip ? ` from ${a.record.ip}` : ""}.
+                            </p>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="gap-2 bg-teal-600 hover:bg-teal-700"
+                              disabled={!canSignThis || attestMutation.isPending}
+                              onClick={() => attestMutation.mutate(a.key)}
+                              data-testid={`attestation-${a.key}-sign`}
+                            >
+                              {attestMutation.isPending && attestMutation.variables === a.key ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <PenLine className="w-4 h-4" />
+                              )}
+                              Record my attestation
+                            </Button>
+                          )}
+                          {!a.attested && !canSignThis && (
+                            <p className="text-xs text-slate-500">
+                              Only the {a.label} for this subsidiary can record this attestation.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            </div>
+
             {/* Gate checklist ----------------------------------------------------- */}
-            <Card className="border-slate-200 shadow-sm">
+            <Card className={cn("border-slate-200 shadow-sm", activeTab !== LAST_TAB && "hidden")} data-testid="gate-card">
               <CardHeader className="border-b border-slate-100">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <CardTitle className="flex items-center gap-2 text-lg">
@@ -3712,6 +3873,37 @@ export default function SubmitOpportunity() {
                 )}
               </CardContent>
             </Card>
+            </div>
+
+            {/* Progress rail ------------------------------------------------------ */}
+            <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-6" data-testid="capture-rail">
+              {selectedId && gate ? (
+                <>
+                  <p className="font-semibold text-slate-900">{itemsLeft} items left</p>
+                  <Progress value={completeness} className="h-1.5 mt-2 mb-3" />
+                  <div className="space-y-0.5">
+                    {CAPTURE_TABS.map((tab, index) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveTab(index)}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs",
+                          activeTab === index ? "bg-teal-50 font-semibold text-teal-700" : "text-slate-600 hover:bg-slate-50"
+                        )}
+                      >
+                        <span>{tab.label}</span>
+                        {progressByTab[index].total > 0 && (
+                          <span>{progressByTab[index].present} of {progressByTab[index].total}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-slate-500">Save the draft to track progress by section.</p>
+              )}
+            </aside>
           </div>
         </div>
       </div>
