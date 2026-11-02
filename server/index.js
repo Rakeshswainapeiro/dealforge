@@ -48,6 +48,7 @@ import authPolicyRouter from './authPolicy.js';
 import adminConfigRouter from './adminConfig.js';
 import bulkImportRouter from './bulkImport.js';
 import aiGovernanceRouter, { purgeExpiredLLMLogs } from './aiGovernance.js';
+import aiReviewRouter from './aiReview.js';
 import { mfaRequiredForRoles } from './config/authPolicy.js';
 import abacRouter from './abac.js';
 import adminRouter from './admin.js';
@@ -241,6 +242,7 @@ app.use('/api/auth-policy', authPolicyRouter);
 app.use('/api/admin-config', adminConfigRouter);
 app.use('/api/bulk-import', bulkImportRouter);
 app.use('/api/ai-governance', aiGovernanceRouter);
+app.use('/api/ai-review', aiReviewRouter);
 
 // Serve the built SPA when it exists (production image / `npm run build`).
 const distDir = path.resolve(__dirname, '..', 'dist');

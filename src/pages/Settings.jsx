@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/api/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -18,7 +18,6 @@ import { ListChecks } from "lucide-react";
 import { ClipboardCheck } from "lucide-react";
 import { Link2 } from "lucide-react";
 import { Scale } from "lucide-react";
-import { navItemEnabled } from '@/lib/features';
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RoutingRulesPanel from "@/components/settings/RoutingRulesPanel";
@@ -67,9 +66,6 @@ function formatChecklistRule(rule = {}) {
 
 export default function Settings() {
   const [aiSettings, setAiSettings] = useState({
-    base_url: "",
-    api_key: "",
-    model: "gpt-4",
     enabled: false,
   });
 
@@ -228,7 +224,9 @@ export default function Settings() {
     const aiConfig = appSettings.find(s => s.setting_key === 'ai_config');
 
     if (aiConfig?.setting_value) {
-      setAiSettings(aiConfig.setting_value);
+      // Only the on/off switch is read; any key, URL or model stored by an
+      // older version is ignored and dropped on the next save.
+      setAiSettings({ enabled: Boolean(aiConfig.setting_value.enabled) });
     }
   }, [appSettings]);
 
@@ -412,7 +410,9 @@ export default function Settings() {
       api.aiGovernance.logStatus().then((res) => setAiGovLog((s) => ({ ...s, status: res?.status || null }))).catch(() => {});
     }
   };
-  useEffect(() => { loadAiGov(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isAdmin]);
+  // loadAiGov only reads isAdmin, so the effect re-runs when that changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadAiGov(); }, [isAdmin]);
 
   const patchAiGov = (patch) => {
     setAiGov((cur) => (cur ? { ...cur, config: { ...cur.config, ...patch } } : cur));
@@ -793,7 +793,7 @@ export default function Settings() {
     try {
       const testPrompt = "Respond with 'Connection successful!' if you receive this message.";
       
-      const result = await api.integrations.Core.InvokeLLM({
+      await api.integrations.Core.InvokeLLM({
         prompt: testPrompt,
         add_context_from_internet: false,
       });
@@ -1011,60 +1011,21 @@ export default function Settings() {
                       </AlertDescription>
                     </Alert>
 
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="base_url" className="flex items-center gap-2">
-                          Base URL
-                          <span className="text-xs text-slate-500">(e.g., https://api.openai.com/v1 or http://localhost:1234/v1)</span>
-                        </Label>
-                        <Input
-                          id="base_url"
-                          value={aiSettings.base_url}
-                          onChange={(e) => handleChange("base_url", e.target.value)}
-                          placeholder="https://api.openai.com/v1"
-                          className="font-mono text-sm"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="api_key" className="flex items-center gap-2">
-                          <Lock className="w-3 h-3" />
-                          API Key
-                          <span className="text-xs text-slate-500">(Optional for local models)</span>
-                        </Label>
-                        <Input
-                          id="api_key"
-                          type="password"
-                          value={aiSettings.api_key}
-                          onChange={(e) => handleChange("api_key", e.target.value)}
-                          placeholder="sk-..."
-                          className="font-mono text-sm"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="model" className="flex items-center gap-2">
-                          Model Name
-                          <span className="text-xs text-slate-500">(e.g., gpt-4, gpt-3.5-turbo, llama2, mistral)</span>
-                        </Label>
-                        <Input
-                          id="model"
-                          value={aiSettings.model}
-                          onChange={(e) => handleChange("model", e.target.value)}
-                          placeholder="gpt-4"
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                    </div>
+                    <Alert className="border-slate-200 bg-slate-50">
+                      <Lock className="h-4 w-4 text-slate-600" />
+                      <AlertDescription className="text-slate-700">
+                        The endpoint, API key and model are set on the server through environment variables
+                        (<code>OPENAI_BASE_URL</code>, <code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code>).
+                        They are never entered, stored or shown here.
+                      </AlertDescription>
+                    </Alert>
 
                     <Separator />
 
                     <div className="flex gap-3">
                       <Button
                         onClick={testConnection}
-                        disabled={testing || !aiSettings.base_url}
+                        disabled={testing}
                         variant="outline"
                         className="flex-1"
                       >

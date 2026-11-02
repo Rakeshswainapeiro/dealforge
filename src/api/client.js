@@ -1415,6 +1415,31 @@ const aiGovernance = {
   },
 };
 
+// Per-tab AI review on the capture form (advisory; never blocks submission).
+const aiReview = {
+  results(opportunityId) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/results');
+  },
+  validate(opportunityId, tab, trigger = 'manual') {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/validate', {
+      method: 'POST', body: JSON.stringify({ tab, trigger }),
+    });
+  },
+  analyse(opportunityId, tab) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/analyse', {
+      method: 'POST', body: JSON.stringify({ tab }),
+    });
+  },
+  ask(opportunityId, tab, question) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/ask', {
+      method: 'POST', body: JSON.stringify({ tab, question }),
+    });
+  },
+  clearAsk(opportunityId, tab) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/ask?tab=' + encodeURIComponent(tab), { method: 'DELETE' });
+  },
+};
+
 async function postBulkFile(path, file, confirm) {
   const formData = new FormData();
   formData.append('file', file);
@@ -1881,6 +1906,7 @@ export const api = {
   authPolicy,
   bulkImport,
   aiGovernance,
+  aiReview,
   adminConfig,
   relatedParty,
   duplicates,

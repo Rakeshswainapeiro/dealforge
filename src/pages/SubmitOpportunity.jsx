@@ -12,6 +12,9 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import AIValidationCard from "@/components/ai/AIValidationCard";
+import AIAnalysisCard from "@/components/ai/AIAnalysisCard";
+import AIQACard from "@/components/ai/AIQACard";
 import {
   Dialog,
   DialogContent,
@@ -587,6 +590,8 @@ export default function SubmitOpportunity() {
     if (id) {
       queryClient.invalidateQueries({ queryKey: ["gateStatus", id] });
       queryClient.invalidateQueries({ queryKey: ["gateDocuments", id] });
+      // A changed document makes that tab's AI results stale; refetch so the banner shows.
+      queryClient.invalidateQueries({ queryKey: ["ai-review", id] });
     }
   }
 
@@ -611,6 +616,38 @@ export default function SubmitOpportunity() {
         description: error?.message || "An unexpected error occurred.",
       });
     },
+  });
+
+  // AI validation (advisory). One run per tab; "Save and Continue" runs it
+  // automatically, everything else is the Re-run button. Never blocks anything.
+  const aiResultsQuery = useQuery({
+    queryKey: ["ai-review", selectedId],
+    queryFn: () => api.aiReview.results(selectedId),
+    enabled: Boolean(selectedId),
+  });
+  const aiAnalyseMutation = useMutation({
+    mutationFn: ({ id, tab }) => api.aiReview.analyse(id, tab),
+    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
+    onError: (error) => toast({ variant: "destructive", title: "AI research did not run", description: error?.message }),
+  });
+  const aiAskMutation = useMutation({
+    mutationFn: ({ id, tab, question }) => api.aiReview.ask(id, tab, question),
+    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
+  });
+  const aiClearMutation = useMutation({
+    mutationFn: ({ id, tab }) => api.aiReview.clearAsk(id, tab),
+    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
+  });
+  // Turns a question into a normal Q&A thread with the Sirius team.
+  const sendToSirius = (question, tabLabel) => {
+    api.qa.open(selectedId, { subject: `${tabLabel}: ${question}`.slice(0, 120), body: question, requires_response: true })
+      .then(() => toast({ title: "Question sent to Sirius", description: "It is now a Q&A thread on this opportunity." }))
+      .catch((error) => toast({ variant: "destructive", title: "Question not sent", description: error?.message }));
+  };
+  const aiValidateMutation = useMutation({
+    mutationFn: ({ id, tab, trigger }) => api.aiReview.validate(id, tab, trigger),
+    onSettled: (_data, _error, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
+    onError: (error) => toast({ variant: "destructive", title: "AI validation did not run", description: error?.message }),
   });
 
   const uploadMutation = useMutation({
@@ -859,7 +896,13 @@ export default function SubmitOpportunity() {
       goToTab(activeTab + 1);
       return;
     }
-    saveDraft({ onSuccess: () => goToTab(activeTab + 1) });
+    const tabKey = CAPTURE_TABS[activeTab].key;
+    saveDraft({
+      onSuccess: (record) => {
+        goToTab(activeTab + 1);
+        if (record?.id) aiValidateMutation.mutate({ id: record.id, tab: tabKey, trigger: "auto_save" });
+      },
+    });
   };
 
   const handleSubmit = () => {
@@ -3038,7 +3081,7 @@ export default function SubmitOpportunity() {
           </div>
 
           {/* Capture + gate ------------------------------------------------------ */}
-          <div className={captureView ? "lg:col-span-3 grid lg:grid-cols-[minmax(0,1fr)_220px] gap-6 items-start" : "hidden"}>
+          <div className={captureView ? "lg:col-span-3 grid lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start" : "hidden"}>
             <div className="space-y-6 min-w-0">
             {screenOpen && !selectedId ? (
               <Card className="border-dashed border-slate-300 bg-white/70 shadow-sm" data-testid="capture-locked">
@@ -3770,7 +3813,7 @@ export default function SubmitOpportunity() {
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
-                                  <p className="font-medium text-slate-900 flex items-center gap-2">
+                                  <div className="font-medium text-slate-900 flex items-center gap-2">
                                     {requirement.label}
                                     {requirement.present ? (
                                       <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
@@ -3786,7 +3829,7 @@ export default function SubmitOpportunity() {
                                         optional
                                       </Badge>
                                     )}
-                                  </p>
+                                  </div>
                                   {requirement.description && (
                                     <p className="text-sm text-slate-500 mt-0.5">{requirement.description}</p>
                                   )}
@@ -3876,7 +3919,8 @@ export default function SubmitOpportunity() {
             </div>
 
             {/* Progress rail ------------------------------------------------------ */}
-            <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-6" data-testid="capture-rail">
+            <div className="space-y-4 min-w-0">
+            <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm" data-testid="capture-rail">
               {selectedId && gate ? (
                 <>
                   <p className="font-semibold text-slate-900">{itemsLeft} items left</p>
@@ -3904,6 +3948,36 @@ export default function SubmitOpportunity() {
                 <p className="text-xs text-slate-500">Save the draft to track progress by section.</p>
               )}
             </aside>
+            <AIValidationCard
+              tabLabel={CAPTURE_TABS[activeTab].label}
+              hasRecord={Boolean(selectedId)}
+              result={aiResultsQuery.data?.results?.[CAPTURE_TABS[activeTab].key]?.validation || null}
+              loading={aiResultsQuery.isLoading}
+              running={aiValidateMutation.isPending && aiValidateMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
+              onRun={() => aiValidateMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key, trigger: "manual" })}
+            />
+            <AIAnalysisCard
+              tabLabel={CAPTURE_TABS[activeTab].label}
+              hasRecord={Boolean(selectedId)}
+              result={aiResultsQuery.data?.results?.[CAPTURE_TABS[activeTab].key]?.analysis || null}
+              loading={aiResultsQuery.isLoading}
+              running={aiAnalyseMutation.isPending && aiAnalyseMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
+              runError={aiAnalyseMutation.data?.run_error && aiAnalyseMutation.variables?.tab === CAPTURE_TABS[activeTab].key ? aiAnalyseMutation.data.run_error : null}
+              onRun={() => aiAnalyseMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key })}
+            />
+            <AIQACard
+              tabLabel={CAPTURE_TABS[activeTab].label}
+              hasRecord={Boolean(selectedId)}
+              qa={aiResultsQuery.data?.qa?.[CAPTURE_TABS[activeTab].key] || null}
+              suggestions={aiResultsQuery.data?.suggestions?.[CAPTURE_TABS[activeTab].key] || []}
+              loading={aiResultsQuery.isLoading}
+              asking={aiAskMutation.isPending && aiAskMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
+              error={aiAskMutation.isError && aiAskMutation.variables?.tab === CAPTURE_TABS[activeTab].key ? aiAskMutation.error?.message : null}
+              onAsk={(question) => aiAskMutation.mutateAsync({ id: selectedId, tab: CAPTURE_TABS[activeTab].key, question })}
+              onClear={() => aiClearMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key })}
+              onSendToSirius={(question) => sendToSirius(question, CAPTURE_TABS[activeTab].label)}
+            />
+            </div>
           </div>
         </div>
       </div>

@@ -38,11 +38,14 @@ const toastVariants = cva(
 );
 
 const Toast = React.forwardRef(({ className, variant, ...props }, ref) => {
+  // onOpenChange belongs to the toast state, not the DOM node, so it is not spread.
+  const domProps = { ...props };
+  delete domProps.onOpenChange;
   return (
     <div
       ref={ref}
       className={cn(toastVariants({ variant }), className)}
-      {...props}
+      {...domProps}
     />
   );
 });
