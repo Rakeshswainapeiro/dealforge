@@ -18,6 +18,7 @@ import {
 } from './storage.js';
 import { UPLOAD_MAX_BYTES, uploadFilter, rateLimit, assertContentMatches } from './security.js';
 import { checkAIProvider, logLLMCall } from './aiGovernance.js';
+import { scrubSecrets } from './config/aiGovernance.js';
 import { resolveActor } from './users.js';
 import { canConfigure } from './rbac.js';
 
@@ -43,7 +44,7 @@ function aiConfig({ base_url, api_key, model } = {}) {
   };
 }
 
-function isAiConfigured(override) {
+export function isAiConfigured(override) {
   return Boolean(aiConfig(override).base);
 }
 
@@ -104,7 +105,36 @@ function rowsToObjects(rows) {
   });
 }
 
-async function callLLM({ prompt, response_json_schema, file_urls = [], config = {}, add_context_from_internet = false, actor = null }) {
+const RATE_LIMIT_MAX_WAIT_S = 25;
+
+// Seconds the provider asks us to wait: Retry-After header, else the
+// "try again in 19.5s" hint in the error text. Null when unknown.
+function retryAfterSeconds(response, payload) {
+  const header = Number(response.headers.get('retry-after'));
+  if (Number.isFinite(header) && header > 0) return header;
+  const match = /try again in\s+([\d.]+)\s*(ms|s)/i.exec(payload?.error?.message || '');
+  if (!match) return null;
+  const value = Number(match[1]);
+  return match[2].toLowerCase() === 'ms' ? value / 1000 : value;
+}
+
+// The provider gets a bounded time to answer. A hung connection would otherwise
+// hold the request (and the user's spinner) open indefinitely.
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 45_000);
+export async function fetchWithTimeout(url, options = {}, ms = AI_TIMEOUT_MS) {
+  try {
+    return await fetch(url, { ...options, signal: AbortSignal.timeout(ms) });
+  } catch (err) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      const error = new Error(`The AI provider timed out (no answer within ${Math.ceil(ms / 1000)} seconds). Try again.`);
+      error.status = 504;
+      throw error;
+    }
+    throw err;
+  }
+}
+
+export async function callLLM({ prompt, response_json_schema, file_urls = [], config = {}, add_context_from_internet = false, actor = null }) {
   const { base, key, model } = aiConfig(config);
   if (!base) {
     const error = new Error(
@@ -157,27 +187,61 @@ async function callLLM({ prompt, response_json_schema, file_urls = [], config = 
   const body = { model, messages, temperature: 0.2 };
   if (response_json_schema) body.response_format = { type: 'json_object' };
 
+  // A failed provider call is logged too (redacted, secrets scrubbed), so a
+  // failure is visible in the governed call log and not only in the UI.
+  const logFailure = (message) => logLLMCall({
+    model, baseUrl: base, actor, prompt: finalPrompt, error: scrubSecrets(message, [key]), config: gate.config,
+  }).catch(() => {});
+
+  const send = () => fetchWithTimeout(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
   let response;
+  let payload;
   try {
-    response = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(key ? { Authorization: `Bearer ${key}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    // A provider rate limit (429) is retried once when the wait is short.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      response = await send();
+      payload = await response.json().catch(() => ({}));
+      if (response.status !== 429) break;
+      if (payload?.error?.code === 'insufficient_quota' || /no credits|exceeded your current quota/i.test(payload?.error?.message || '')) {
+        const error = new Error('The AI provider account has no credits or quota left. Add billing credit with the provider, then re-run.');
+        error.status = 402;
+        await logFailure(error.message);
+        throw error;
+      }
+      const wait = retryAfterSeconds(response, payload);
+      if (attempt === 1 || wait === null || wait > RATE_LIMIT_MAX_WAIT_S) {
+        const error = new Error(wait === null
+          ? 'The AI provider is rate-limiting requests. Try again in a minute.'
+          : `The AI provider is rate-limiting requests. Try again in about ${Math.ceil(wait)} seconds.`);
+        error.status = 429;
+        error.retry_after = wait;
+        await logFailure(error.message);
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.ceil(wait * 1000) + 250));
+    }
   } catch (err) {
-    const error = new Error(`Failed to reach AI provider at ${base}: ${err.message}`);
+    if (err.status === 429 || err.status === 402) throw err;
+    if (err.status === 504) { await logFailure(err.message); throw err; }
+    const error = new Error(scrubSecrets(`Failed to reach AI provider at ${base}: ${err.message}`, [key]));
     error.status = 502;
+    await logFailure(error.message);
     throw error;
   }
 
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload?.error?.message || payload?.message || response.statusText;
-    const error = new Error(`AI provider error (${response.status}): ${detail}`);
+    const error = new Error(scrubSecrets(`AI provider error (${response.status}): ${detail}`, [key]));
     error.status = 502;
+    await logFailure(error.message);
     throw error;
   }
 
@@ -205,6 +269,7 @@ async function callLLM({ prompt, response_json_schema, file_urls = [], config = 
       }
       const error = new Error('AI provider did not return valid JSON for the requested schema');
       error.status = 502;
+      await logFailure(error.message);
       throw error;
     }
   }
@@ -216,8 +281,15 @@ async function callLLM({ prompt, response_json_schema, file_urls = [], config = 
 // InvokeLLM
 // ---------------------------------------------------------------------------
 router.post('/invoke-llm', aiLimit, async (req, res) => {
-  const { prompt, response_json_schema, file_urls, add_context_from_internet, model, base_url, api_key } =
-    req.body || {};
+  const { prompt, response_json_schema, file_urls, add_context_from_internet } = req.body || {};
+  // The endpoint, key and model come from server environment only. A caller
+  // may not point the server at another host or supply a credential.
+  const forbidden = ['base_url', 'api_key', 'model'].filter((k) => req.body && k in req.body);
+  if (forbidden.length) {
+    return res.status(400).json({
+      error: `${forbidden.join(', ')} cannot be set by the caller. The AI endpoint, key and model are configured on the server.`,
+    });
+  }
   try {
     const actor = await resolveActor(req).catch(() => null);
     const result = await callLLM({
@@ -225,7 +297,6 @@ router.post('/invoke-llm', aiLimit, async (req, res) => {
       response_json_schema,
       file_urls,
       add_context_from_internet,
-      config: { model, base_url, api_key },
       actor,
     });
     if (typeof result === 'string') return res.json(result);

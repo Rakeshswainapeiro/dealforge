@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "server:dev": "node --watch server/index.js",
-    "test:server": "node --test server/tests/*.test.js"
+    "test:server": "node --test server/tests/*.test.js",
+    "ai:check": "node --env-file=.env scripts/check_openai.mjs",
+    "ai:e2e": "node --env-file=.env scripts/ai_review_e2e.mjs"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",

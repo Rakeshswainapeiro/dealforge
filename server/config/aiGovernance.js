@@ -204,6 +204,19 @@ export function redactForLog(text, policy = AI_GOVERNANCE_POLICY) {
   return out.length > cap ? out.slice(0, cap) : out;
 }
 
+// Mask anything key-shaped in a message that may be logged or sent to a browser:
+// the configured key itself, an OpenAI-style key (full or partly masked by the
+// provider, e.g. "sk-proj-****abcd") and bearer tokens. Used on provider errors.
+export function scrubSecrets(text, knownKeys = []) {
+  let out = String(text === undefined || text === null ? '' : text);
+  for (const k of knownKeys) {
+    if (k && String(k).length >= 8) out = out.split(String(k)).join('[redacted-key]');
+  }
+  out = out.replace(/\bsk-[A-Za-z0-9_*.-]{4,}/g, '[redacted-key]');
+  out = out.replace(/Bearer\s+[A-Za-z0-9._*-]{6,}/g, 'Bearer [redacted]');
+  return out;
+}
+
 // Map a configured base URL to a provider register id so an approval can be
 // enforced. Unknown endpoints fall back to the 'custom' entry.
 export function providerIdForBase(baseUrl) {
@@ -253,6 +266,7 @@ export default {
   buildAIGovernanceConfig,
   diffAIGovernanceConfig,
   redactForLog,
+  scrubSecrets,
   providerIdForBase,
   providerForBase,
   isProviderApproved,

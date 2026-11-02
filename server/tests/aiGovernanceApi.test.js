@@ -109,15 +109,15 @@ describe('AI governance (NFR-03)', () => {
     assert.ok(Array.isArray(ok.data.logs));
   });
 
-  test('a model call to an unapproved provider is refused before it leaves the server', async (t) => {
+  test('invoke-llm refuses a caller-supplied endpoint, key or model', async (t) => {
     if (!online) return t.skip('server offline');
     if (!adminCookie) return t.skip('no admin session');
-    // openai is pending by default; a call that names it must be blocked 403.
-    const res = await req('/api/integrations/invoke-llm', {
-      method: 'POST', cookie: adminCookie,
-      body: { prompt: 'hello', base_url: 'https://api.openai.com/v1' },
-    });
-    assert.equal(res.status, 403);
-    assert.match(String(res.data.error || ''), /not approved/i);
+    for (const extra of [{ base_url: 'https://evil.example/v1' }, { api_key: 'sk-test' }, { model: 'other' }]) {
+      const res = await req('/api/integrations/invoke-llm', {
+        method: 'POST', cookie: adminCookie, body: { prompt: 'hello', ...extra },
+      });
+      assert.equal(res.status, 400, JSON.stringify(extra));
+      assert.match(String(res.data.error || ''), /configured on the server/i);
+    }
   });
 });
