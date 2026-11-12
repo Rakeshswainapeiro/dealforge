@@ -3,6 +3,7 @@ import { pool } from './db.js';
 import { writeAudit } from './audit.js';
 import { resolveActor } from './users.js';
 import { canViewOrg, canWriteOrg, isCrossOrgReader } from './rbac.js';
+import { canSeeInternalAssessment, isInternalAuditAction } from './config/aiVisibility.js';
 import { descendantIds } from './org.js';
 import { evaluateAlignment } from './themes.js';
 import { getOrganization } from './org.js';
@@ -448,6 +449,31 @@ const TIMELINE_LABELS = {
   evidence_recorded: 'External evidence recorded', evidence_confirmed: 'External evidence confirmed', evidence_rejected: 'External evidence rejected',
 };
 
+// Extra, reviewer-facing facts for the decisions that carry them (reasons,
+// totals, the named CIO). Read from the audit event's own recorded payload only.
+export function timelineDetail(action, after = {}) {
+  const parts = [];
+  const add = (label, v) => { if (v !== undefined && v !== null && String(v).trim() !== '') parts.push(label + ': ' + v); };
+  if (action === 'scorecard_override') {
+    add('Named CIO', after.by); add('Reason', after.reason); add('Recorded at', after.at); add('Total', after.total);
+  } else if (action === 'scorecard_scored') {
+    add('Total', after.total); add('Outcome', after.outcome);
+  } else if (action === 'transition') {
+    add('Reason code', after.reason_code); add('Reason', after.reason_text);
+  } else if (action === 'hard_filter_confirmed' || action === 'hard_filter_overridden') {
+    add('Reason', after.reason);
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
+// Screening, alignment and the memo are the Sirius Investment Team's assessment;
+// a subsidiary Preparer gets the submission status, never these.
+function assertInternalAssessmentAccess(actor) {
+  if (!canSeeInternalAssessment(actor)) {
+    const e = new Error('Only the Sirius Investment Team may read the internal assessment'); e.status = 403; throw e;
+  }
+}
+
 /** The opportunity timeline: who did what, when (AUD-01/02). */
 export async function opportunityTimeline(id, actor) {
   const row = await loadVisibleRow(id, actor);
@@ -465,12 +491,14 @@ export async function opportunityTimeline(id, actor) {
   for (const e of events) {
     if (NOISE.has(e.action)) continue;
     if (!isReviewer(actor) && String(e.action).startsWith('evidence_')) continue;
+    if (!canSeeInternalAssessment(actor) && isInternalAuditAction(e.action)) continue;
     const after = e.after || {};
     if (!seeInternal && (after.visibility === 'internal' || internal.has(after.thread_id))) continue;
     out.push({
       ts: e.ts, action: e.action, label: TIMELINE_LABELS[e.action] || String(e.action || '').replace(/_/g, ' '),
       actor_email: e.actor_email || null, comment: e.comment || null,
       from: e.before?.status || null, to: after.status || null,
+      role: e.role || null, detail: timelineDetail(e.action, after),
     });
   }
   for (const d of docs) {
@@ -542,6 +570,7 @@ pipelineRouter.get('/rollup', async (req, res) => {
 
 pipelineRouter.get('/opportunities/:id/alignment', async (req, res) => {
   try {
+    assertInternalAssessmentAccess(req.actor);
     const { rows } = await pool.query(
       'SELECT * FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false',
       [OPPORTUNITY_ENTITY, req.params.id]
@@ -565,6 +594,7 @@ pipelineRouter.get('/opportunities/:id/alignment', async (req, res) => {
 // throughout (SCR-09): the panel recommends, a person decides.
 pipelineRouter.get('/opportunities/:id/screening', async (req, res) => {
   try {
+    assertInternalAssessmentAccess(req.actor);
     const { rows } = await pool.query(
       'SELECT * FROM entity_record WHERE entity = $1 AND id = $2 AND deleted = false',
       [OPPORTUNITY_ENTITY, req.params.id]
@@ -665,7 +695,9 @@ async function loadMemoInputs(req) {
   const [org, documents, alignment] = await Promise.all([
     getOrganization(row.owner_org_id).catch(() => null),
     listDocuments(row.id, { currentOnly: true }).catch(() => []),
-    evaluateAlignment(row, { orgId: row.owner_org_id }).catch(() => null),
+    // The strategic-alignment reading is Sirius's assessment: a Preparer's copy
+    // of the memo carries the submission only.
+    canSeeInternalAssessment(req.actor) ? evaluateAlignment(row, { orgId: row.owner_org_id }).catch(() => null) : Promise.resolve(null),
   ]);
   return { row, org, documents, alignment };
 }

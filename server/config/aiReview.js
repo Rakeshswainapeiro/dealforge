@@ -18,6 +18,10 @@
 import crypto from 'node:crypto';
 import { INTAKE_FIELDS } from './intakeConfig.js';
 import { AI_OUTPUT_LABEL, AI_OUTPUT_DISCLAIMER } from './aiGovernance.js';
+import { evaluateRiskRegister } from './riskRegister.js';
+import { rubricHashFragment, rubricGuidance, rubricExtraKeys, isRubricEnabled, RUBRIC_TOLERANCES } from './aiRubrics.js';
+import { evaluateCurrency } from './currency.js';
+import { evaluateSourcesUses, FUNDING_STATUSES } from './sourcesUses.js';
 
 export const AI_REVIEW_ENTITY = 'AIReviewResult';
 export const AI_REVIEW_KINDS = ['validation', 'analysis', 'qa'];
@@ -82,12 +86,18 @@ export function tabFields(tabKey) {
 // The slice of the opportunity a tab is judged on: its labelled fields plus its
 // structured blocks. This is what the model sees and what the stale hash covers,
 // so a change anywhere else on the form does not stale this tab's result.
+// The structured (non-field) keys a tab reads: its own, plus, while its rubric is
+// on, the other-tab fields that rubric needs. With the rubric off this is `extra`.
+function extraKeysOf(tab) {
+  return [...new Set([...tab.extra, ...rubricExtraKeys(tab.key)])];
+}
+
 export function buildTabContext(tabKey, data = {}) {
   const tab = tabByKey(tabKey);
   if (!tab) return null;
   const fields = tabFields(tabKey).map((f) => ({ key: f.key, label: f.label, value: data[f.key] ?? null }));
   const structured = {};
-  for (const key of tab.extra) if (!blank(data[key])) structured[key] = data[key];
+  for (const key of extraKeysOf(tab)) if (!blank(data[key])) structured[key] = data[key];
   return { tab: tab.key, label: tab.label, fields, structured };
 }
 
@@ -115,7 +125,10 @@ export function hashTabInputs(tabKey, data = {}, documents = []) {
   const docs = tabDocuments(tabKey, documents)
     .map((d) => ({ slot: d.requirement_key, version: d.version ?? null, sha256: d.sha256 ?? null }))
     .sort((a, b) => String(a.slot).localeCompare(String(b.slot)));
-  return crypto.createHash('sha256').update(JSON.stringify(canonical({ ctx, docs }))).digest('hex');
+  // A tab whose rubric is enabled also hashes its rubric version, so raising that
+  // one version stales that one tab. For every other tab the fragment is empty,
+  // so the hashed object (and the hash) is unchanged.
+  return crypto.createHash('sha256').update(JSON.stringify(canonical({ ctx, docs, ...rubricHashFragment(tabKey) }))).digest('hex');
 }
 
 // A stored result is stale when the tab's inputs have changed since it ran, and
@@ -250,27 +263,417 @@ function financialsChecks(data, gate) {
   }
   const flags = gate?.sufficiency?.open_flags || [];
   if (flags.length) {
-    out.push(check('sufficiency', 'Content is sufficient', 'review', flags.slice(0, 3).map((f) => f.label || f.key).join('; ') + '.'));
+    // Say what is missing, not just the name of the check ("Risk register attached"
+    // read as if it were present). Prefer each flag's own message.
+    const said = (f) => String(f.message || ('Missing: ' + (f.label || f.key))).replace(/\.$/, '');
+    out.push(check('sufficiency', 'Content is sufficient', 'review', flags.slice(0, 3).map(said).join('. ') + '.'));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Financials and returns: rubric checks (only while that tab's rubric is on).
+//
+// Four deterministic checks the existing rules do not make, plus one summary of
+// the financial engine's own plausibility warnings. The engine is NOT re-derived
+// here: its result is passed in (`engine`) and only read. Any check whose inputs
+// are missing is "review", never "pass". Advisory: nothing here blocks submission.
+// ---------------------------------------------------------------------------
+const RETURN_METRICS = [
+  { key: 'irr', label: 'IRR', higherIsBetter: true, fields: { base: 'return_irr_base', upside: 'return_irr_upside', downside: 'return_irr_downside' } },
+  { key: 'roic', label: 'ROIC', higherIsBetter: true, fields: { base: 'return_roic_base', upside: 'return_roic_upside', downside: 'return_roic_downside' } },
+  { key: 'moic', label: 'MOIC', higherIsBetter: true, fields: { base: 'return_moic_base', upside: 'return_moic_upside', downside: 'return_moic_downside' } },
+  { key: 'payback', label: 'Payback', higherIsBetter: false, fields: { base: 'return_payback_years', upside: 'return_payback_upside', downside: 'return_payback_downside' } },
+];
+
+// "Downside is not better than base, and base is not better than upside", metric by metric.
+function scenarioOrderCheck(data) {
+  const title = 'Scenarios are in order (downside, base, upside)';
+  const tol = RUBRIC_TOLERANCES.returns.scenario_order_tolerance_pp;
+  const conflicts = [];
+  let compared = 0;
+  for (const m of RETURN_METRICS) {
+    const v = Object.fromEntries(Object.entries(m.fields).map(([sc, f]) => [sc, num(data[f])]));
+    // The downside is the worst case for every measure and the upside the best; only
+    // the direction of "better" differs (a higher IRR is better, a shorter payback is).
+    const chain = ['downside', 'base', 'upside'].filter((sc) => v[sc] !== null);
+    for (let i = 0; i < chain.length; i += 1) {
+      for (let j = i + 1; j < chain.length; j += 1) {
+        const worse = chain[i]; const better = chain[j];
+        compared += 1;
+        // `worse` should not beat `better`.
+        const beats = m.higherIsBetter ? v[worse] - v[better] > tol : v[better] - v[worse] > tol;
+        if (beats) conflicts.push(`${m.label}: ${worse} ${v[worse]} is better than ${better} ${v[better]}`);
+      }
+    }
+  }
+  if (conflicts.length) return check('fin_scenario_order', title, 'fail', conflicts.slice(0, 3).join('; ') + '.');
+  if (compared === 0) return check('fin_scenario_order', title, 'review', 'Fewer than two scenarios are captured for any return measure, so their order could not be checked.');
+  return check('fin_scenario_order', title, 'pass', `${compared} scenario comparison(s) are in order.`);
+}
+
+// IRR and MOIC describe the same cash flows, so they must agree in sign, and the
+// holding period they imply should be believable. The implied period assumes one
+// exit; interim distributions shorten the true figure, so the range is generous.
+function returnsMathCheck(data) {
+  const title = 'IRR and MOIC are consistent';
+  const { implied_hold_years_min: lo, implied_hold_years_max: hi } = RUBRIC_TOLERANCES.returns;
+  const conflicts = []; const odd = [];
+  let compared = 0;
+  for (const sc of ['base', 'upside', 'downside']) {
+    const irr = num(data[`return_irr_${sc}`]); const moic = num(data[`return_moic_${sc}`]);
+    if (irr === null || moic === null || moic <= 0 || irr <= -100) continue;
+    compared += 1;
+    if ((irr > 0 && moic < 1) || (irr < 0 && moic > 1)) {
+      conflicts.push(`${sc}: IRR ${irr}% but MOIC ${moic}x`);
+    } else if (irr > 0 && moic > 1) {
+      const years = Math.log(moic) / Math.log(1 + irr / 100);
+      if (years < lo || years > hi) odd.push(`${sc}: IRR ${irr}% with MOIC ${moic}x implies about ${round(years, 1)} years`);
+    }
+  }
+  if (conflicts.length) return check('fin_returns_math', title, 'fail', conflicts.join('; ') + '. A return cannot be positive and a multiple below 1x (or the reverse).');
+  if (compared === 0) return check('fin_returns_math', title, 'review', 'No scenario has both an IRR and a MOIC, so they could not be compared.');
+  if (odd.length) return check('fin_returns_math', title, 'review', odd.join('; ') + `; expected between ${lo} and ${hi} years.`);
+  return check('fin_returns_math', title, 'pass', `IRR and MOIC agree in ${compared} scenario(s) and imply a plausible holding period.`);
+}
+
+// Earnings added (AED) and return added (bps) describe the same accretion.
+function accretionSignCheck(data) {
+  const title = 'Accretion in AED and in basis points agree';
+  const earnings = num(data.accretion_net_earnings_aed); const bps = num(data.accretion_bps);
+  if (earnings === null || bps === null) {
+    return check('fin_accretion_sign', title, 'review', `${earnings === null && bps === null ? 'Neither accretion figure is' : earnings === null ? 'Net earnings added is' : 'Return added (bps) is'} captured, so they could not be compared.`);
+  }
+  if ((earnings > 0 && bps < 0) || (earnings < 0 && bps > 0)) {
+    return check('fin_accretion_sign', title, 'fail', `Net earnings added is AED ${earnings} mn but the return added is ${bps} bps: one is accretive and the other dilutive.`);
+  }
+  return check('fin_accretion_sign', title, 'pass', `AED ${earnings} mn and ${bps} bps point the same way.`);
+}
+
+// AED is pegged to USD. A recorded rate far from the peg is more likely a typing
+// error than a market move. Omitted when the deal reports in AED and records no rate.
+function fxPegCheck(data) {
+  const title = 'USD/AED rate is close to the peg';
+  const cur = evaluateCurrency(data);
+  if (!cur.fx_required && !cur.fx_present) return null;
+  if (!cur.fx_present) return check('fin_fx_peg', title, 'review', 'The deal reports in USD but no AED-per-USD rate is recorded.');
+  if (!cur.fx_valid) return check('fin_fx_peg', title, 'review', 'The recorded AED-per-USD rate is not a positive number.');
+  const { peg_aed_per_usd: peg, peg_tolerance_pct: tolPct } = RUBRIC_TOLERANCES.fx;
+  const devPct = (Math.abs(cur.fx_rate - peg) / peg) * 100;
+  return devPct > tolPct
+    ? check('fin_fx_peg', title, 'review', `The recorded rate ${cur.fx_rate} is ${round(devPct, 1)}% from the ${peg} peg (more than ${tolPct}%).`)
+    : check('fin_fx_peg', title, 'pass', `The recorded rate ${cur.fx_rate} is within ${tolPct}% of the ${peg} peg.`);
+}
+
+// The financial engine's plausibility results, summarised. `engine` is the output
+// of computeFinancialModel (its `sanity.checks`), or { error }. Informational results are ignored. A
+// warning, or any check the engine could not make for lack of data, is "review".
+function financialSanityCheck(engine) {
+  const title = 'Projections and valuation look plausible';
+  const results = engine?.sanity?.checks;
+  if (!engine || engine.error || !Array.isArray(results)) {
+    return check('financial_sanity', title, 'review', 'The financial model could not be run, so the plausibility checks were not made.');
+  }
+  const items = results.filter((s) => s && s.status !== 'info');
+  if (items.length === 0) return check('financial_sanity', title, 'review', 'The financial model returned no plausibility checks.');
+  const warns = items.filter((s) => s.status === 'warn');
+  const unmade = items.filter((s) => s.status === 'not_checkable');
+  const parts = [];
+  if (warns.length) parts.push(`${warns.length} warning(s): ${warns.map((w) => `${w.label} - ${w.detail}`).join(' | ')}`);
+  if (unmade.length) parts.push(`${unmade.length} of ${items.length} check(s) could not be made for lack of data: ${unmade.map((u) => u.label).join(', ')}`);
+  if (parts.length) return check('financial_sanity', title, 'review', (parts.join('. ') + '.').slice(0, 400));
+  return check('financial_sanity', title, 'pass', `All ${items.length} plausibility checks passed.`);
+}
+
+function financialsRubricChecks(data, engine) {
+  return [financialSanityCheck(engine), scenarioOrderCheck(data), returnsMathCheck(data), accretionSignCheck(data), fxPegCheck(data)].filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Funding and key asks: rubric checks (only while that tab's rubric is on).
+//
+// Three checks the existing rules do not make. The funding plan is read through
+// evaluateSourcesUses (the single place that turns the plan into totals and
+// statuses); nothing is re-derived. What already exists is NOT repeated here:
+// sources equal uses, the funding order, an unknown status, the ask within the
+// total, and the budget-variance justification. Missing data is "review", never
+// "pass". Advisory: nothing here blocks submission.
+// ---------------------------------------------------------------------------
+const FUNDING_RANK = Object.fromEntries(FUNDING_STATUSES.map((s) => [s.value, s.rank]));
+const SIRIUS_SOURCE = 'sirius_capital';
+
+// How much of the funding other than Sirius's own ask is still unconfirmed.
+function fundingConfirmedCheck(plan) {
+  const title = 'Funding other than the ask is confirmed';
+  if (!plan.captured) return check('fund_indicative_share', title, 'review', 'The funding plan is not captured, so how firm the funding is could not be judged.');
+  const others = plan.sources.filter((s) => s.present && s.key !== SIRIUS_SOURCE && s.aed > 0);
+  const total = others.reduce((sum, s) => sum + s.aed, 0);
+  if (total <= 0) {
+    return check('fund_indicative_share', title, 'review', 'No funding source other than Sirius capital is shown, so the plan rests entirely on the ask.');
+  }
+  const unconfirmed = others.filter((s) => !(FUNDING_RANK[s.status] >= FUNDING_RANK.committed));
+  const unconfirmedAed = unconfirmed.reduce((sum, s) => sum + s.aed, 0);
+  const share = (unconfirmedAed / total) * 100;
+  const limit = RUBRIC_TOLERANCES.funding.indicative_share_review_pct;
+  const unstated = unconfirmed.filter((s) => !s.status).map((s) => s.label);
+  if (share > limit) {
+    return check('fund_indicative_share', title, 'review',
+      `${round(share, 0)}% of the funding other than Sirius capital (AED ${round(unconfirmedAed)} of ${round(total)} mn) is only indicative or has no status stated; the limit is ${limit}%.${unstated.length ? ` No status: ${unstated.join(', ')}.` : ''}`);
+  }
+  if (unstated.length) {
+    return check('fund_indicative_share', title, 'review', `${unstated.join(', ')} ${unstated.length === 1 ? 'has' : 'have'} no funding status stated.`);
+  }
+  return check('fund_indicative_share', title, 'pass',
+    `${round(100 - share, 0)}% of the funding other than Sirius capital is secured or committed${unconfirmed.length ? `; the rest is indicative, within the ${limit}% limit` : ''}.`);
+}
+
+// A plan should carry some contingency.
+function fundingContingencyCheck(plan) {
+  const title = 'Funding plan carries a contingency';
+  if (!plan.captured) return check('fund_contingency', title, 'review', 'The funding plan is not captured, so a contingency could not be looked for.');
+  const row = plan.uses.find((u) => u.key === 'contingency');
+  const min = RUBRIC_TOLERANCES.funding.contingency_min_aed;
+  if (!row || !(row.aed > min)) return check('fund_contingency', title, 'review', 'The uses of funds show no contingency, so a delay or a cost overrun would need a further ask.');
+  return check('fund_contingency', title, 'pass', `A contingency of AED ${row.aed} mn is included in the uses.`);
+}
+
+// The overall "Funding sources status" claim must not be firmer than the weakest source behind it.
+function fundingStatusConsistentCheck(data, plan) {
+  const title = 'Overall funding status matches the sources';
+  const claimed = typeof data.funding_sources_status === 'string' ? data.funding_sources_status : '';
+  if (!claimed) return null; // nothing was claimed, so there is nothing to compare
+  if (!plan.captured) return check('fund_status_consistent', title, 'review', `Funding is stated as ${claimed}, but the funding plan is not captured to compare it with.`);
+  const others = plan.sources.filter((s) => s.present && s.key !== SIRIUS_SOURCE);
+  if (others.length === 0) return check('fund_status_consistent', title, 'review', `Funding is stated as ${claimed}, but no source other than Sirius capital is shown to compare it with.`);
+  const claimedRank = FUNDING_RANK[claimed];
+  if (!claimedRank) return check('fund_status_consistent', title, 'review', `The overall funding status "${claimed}" is not a recognised value.`);
+  const weaker = others.filter((s) => (FUNDING_RANK[s.status] || 0) < claimedRank);
+  if (weaker.length) {
+    return check('fund_status_consistent', title, 'review',
+      `Funding is stated as ${claimed}, but ${weaker.map((s) => `${s.label} is ${s.status || 'not given a status'}`).join('; ')}.`);
+  }
+  return check('fund_status_consistent', title, 'pass', `Every source shown is at least ${claimed}.`);
+}
+
+function fundingRubricChecks(data) {
+  const plan = evaluateSourcesUses(data);
+  return [fundingConfirmedCheck(plan), fundingContingencyCheck(plan), fundingStatusConsistentCheck(data, plan)].filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Opportunity overview: rubric checks (only while that tab's rubric is on).
+//
+// Decision D2: only the fields this tab already has, and the attached documents,
+// are evidence. Customer concentration, retention, churn and recurring share are
+// not captured anywhere, so nothing here (or in the model's guidance) infers them:
+// they are reported as "Not enough evidence". Four checks on the snapshot figures
+// and the buy-versus-build answer; the mandate-fit check this tab shares with
+// Rationale is unchanged and not repeated. Missing data is "review", never "pass".
+// Advisory: nothing here blocks submission.
+// ---------------------------------------------------------------------------
+const NOT_ENOUGH_EVIDENCE = 'Not enough evidence';
+
+// Last-year revenue and EBITDA should be given when the opportunity is a purchase.
+function snapshotPresentCheck(data) {
+  const title = 'The target\'s last-year revenue and EBITDA are given';
+  const type = text(data.opportunity_type);
+  const { snapshot_expected_types: expected } = RUBRIC_TOLERANCES.overview;
+  if (!type) return check('ov_snapshot_present', title, 'review', 'The opportunity type is not stated, so it is not known whether the target\'s revenue and EBITDA are expected.');
+  if (!expected.includes(type)) return null; // not a purchase of an operating business
+  const missing = [];
+  if (num(data.snapshot_revenue_last_fy_aed) === null) missing.push('revenue');
+  if (num(data.snapshot_ebitda_last_fy_aed) === null) missing.push('EBITDA');
+  return missing.length
+    ? check('ov_snapshot_present', title, 'review', `The target's last-year ${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} not given, so its size and profitability cannot be judged.`)
+    : check('ov_snapshot_present', title, 'pass', 'Last-year revenue and EBITDA are both given.');
+}
+
+// EBITDA cannot exceed revenue, and a margin far outside a normal range is more likely a typing error.
+function ebitdaVsRevenueCheck(data) {
+  const title = 'EBITDA is consistent with revenue';
+  const rev = num(data.snapshot_revenue_last_fy_aed); const ebitda = num(data.snapshot_ebitda_last_fy_aed);
+  if (rev === null || ebitda === null) return null; // an absent figure is reported by ov_snapshot_present where one is expected
+  if (rev < 0) return check('ov_ebitda_vs_revenue', title, 'fail', `Last-year revenue is negative (AED ${rev} mn).`);
+  if (ebitda > rev) return check('ov_ebitda_vs_revenue', title, 'fail', `EBITDA (AED ${ebitda} mn) is larger than revenue (AED ${rev} mn), which is not possible.`);
+  if (rev === 0) return check('ov_ebitda_vs_revenue', title, ebitda === 0 ? 'review' : 'fail', ebitda === 0 ? 'Revenue and EBITDA are both zero, so the margin cannot be judged.' : 'Revenue is zero but EBITDA is not.');
+  const margin = (ebitda / rev) * 100;
+  const { ebitda_margin_min_pct: lo, ebitda_margin_max_pct: hi } = RUBRIC_TOLERANCES.overview;
+  return margin < lo || margin > hi
+    ? check('ov_ebitda_vs_revenue', title, 'review', `The EBITDA margin is ${round(margin, 1)}%, outside ${lo}% to ${hi}%; check the figures and units.`)
+    : check('ov_ebitda_vs_revenue', title, 'pass', `The EBITDA margin is ${round(margin, 1)}%.`);
+}
+
+// A headcount is a whole number above zero.
+function employeesValidCheck(data) {
+  const title = 'The headcount is a sensible number';
+  if (blank(data.snapshot_employees)) return check('ov_employees_valid', title, 'review', 'The target\'s headcount is not given.');
+  const n = num(data.snapshot_employees);
+  if (n === null) return check('ov_employees_valid', title, 'review', 'The headcount is not a number.');
+  if (n < 0) return check('ov_employees_valid', title, 'fail', `The headcount is negative (${n}).`);
+  if (n === 0 || !Number.isInteger(n)) return check('ov_employees_valid', title, 'review', n === 0 ? 'The headcount is zero.' : `The headcount ${n} is not a whole number; say if it is full-time equivalents.`);
+  return check('ov_employees_valid', title, 'pass', `${n} employees.`);
+}
+
+// A purchase should say what happens if it is not done.
+function buildBuyReasonedCheck(data) {
+  const title = 'A purchase says what happens if it is not done';
+  const choice = text(data.build_buy_partner);
+  if (!choice) return check('ov_build_buy_reasoned', title, 'review', 'The build, buy or partner choice is not stated.');
+  if (choice !== 'buy') return null;
+  return blank(data.cost_of_not_doing)
+    ? check('ov_build_buy_reasoned', title, 'review', 'The opportunity is a purchase but the cost of not doing it is not stated, so the alternatives were not weighed on the page.')
+    : check('ov_build_buy_reasoned', title, 'pass', 'The cost of not doing the purchase is stated.');
+}
+
+function overviewRubricChecks(data) {
+  return [snapshotPresentCheck(data), ebitdaVsRevenueCheck(data), employeesValidCheck(data), buildBuyReasonedCheck(data)].filter(Boolean);
+}
+
+// True when some document text names a commercial subject (customers, retention, contracts...)
+// AND contains a number. A minimal gate on "the documents hold commercial data", not proof of it.
+function hasCommercialEvidence(snippets) {
+  const terms = RUBRIC_TOLERANCES.overview.commercial_evidence_terms;
+  return Object.values(snippets && typeof snippets === 'object' ? snippets : {}).some((t) => {
+    if (typeof t !== 'string' || !t.trim()) return false;
+    const lower = t.toLowerCase();
+    return /\d/.test(t) && terms.some((term) => lower.includes(term));
+  });
+}
+const hasReadableText = (snippets) => Object.values(snippets && typeof snippets === 'object' ? snippets : {}).some((t) => typeof t === 'string' && t.trim());
+
+// ---------------------------------------------------------------------------
+// Rationale and fit: rubric checks (only while that tab's rubric is on).
+//
+// Three checks the existing rules do not make. Not repeated here: the required
+// "why now" and "why us" narratives (the checklist check already reports them
+// missing) and the sector, geography and size fit (mandateCheck). Two of the
+// checks read fields from other tabs (the build/buy/partner choice and the
+// valuation method); those reach this tab's context only while the rubric is on.
+// Missing data is "review", never "pass". Every check here is a judgement, so
+// none can fail. Advisory: nothing here blocks submission.
+// ---------------------------------------------------------------------------
+const text = (v) => (typeof v === 'string' ? v.trim() : '');
+
+// A purchase is anchored on what similar deals fetched.
+function comparablesForBuyCheck(data) {
+  const title = 'A purchase is anchored on comparable transactions';
+  const choice = text(data.build_buy_partner);
+  if (!choice) return check('rat_comparables_for_buy', title, 'review', 'The build, buy or partner choice is not stated on the Opportunity overview, so it is not known whether comparable transactions are needed.');
+  if (choice !== 'buy') return null; // not a purchase, so there is nothing to anchor
+  return blank(data.comparable_transactions)
+    ? check('rat_comparables_for_buy', title, 'review', 'The opportunity is a purchase but no comparable transactions are given, so the price has no stated anchor.')
+    : check('rat_comparables_for_buy', title, 'pass', 'The purchase names comparable transactions.');
+}
+
+// The optional fields that show the strategic reason is evidenced, not just asserted.
+function rationaleEvidencedCheck(data) {
+  const title = 'The strategic reason is evidenced';
+  const missing = [];
+  if (blank(data.strategy_link)) missing.push('the link to Sirius strategy');
+  if (blank(data.rationale_evidence) && blank(data.market_data_evidence)) missing.push('any supporting evidence or market data');
+  return missing.length
+    ? check('rat_rationale_evidenced', title, 'review', `The rationale is missing ${missing.join(' and ')}, so it rests on assertion alone.`)
+    : check('rat_rationale_evidenced', title, 'pass', 'The strategy link and supporting evidence are both given.');
+}
+
+// A price built only on projections is a warning sign. Reads the valuation method from the Financials tab.
+function valuationBasisCheck(data) {
+  const title = 'The price is not built on projections alone';
+  const method = text(data.entry_valuation_method);
+  const { projection_based_valuation_methods: projected, unspecified_valuation_methods: unspecified } = RUBRIC_TOLERANCES.rationale;
+  if (!method) return check('rat_valuation_basis', title, 'review', 'No entry valuation method is stated on the Financials tab, so the basis of the price is unknown.');
+  if (projected.includes(method)) return check('rat_valuation_basis', title, 'review', `The entry valuation rests on a ${method.toUpperCase()}, which is built on projections rather than on delivered results or observed prices; see what else supports the price.`);
+  if (unspecified.includes(method)) return check('rat_valuation_basis', title, 'review', 'The entry valuation method is given as "other" without saying what it is, so the basis of the price is unclear.');
+  return check('rat_valuation_basis', title, 'pass', `The entry valuation uses ${method.replace(/_/g, ' ')}, which rests on delivered results or observed prices.`);
+}
+
+function rationaleRubricChecks(data) {
+  return [comparablesForBuyCheck(data), rationaleEvidencedCheck(data), valuationBasisCheck(data)].filter(Boolean);
+}
+
+// The sanctions, PEP and adverse-media inputs describe the same exposure from
+// three angles. Each is evaluated on its own, so this reads the three results
+// from the gate and says when they disagree. Advisory: it changes no verdict.
+function sanctionsSignals(gate) {
+  const sig = [];
+  const hf = (gate?.hard_filters?.items || []).find((i) => i.key === 'sanctions_export');
+  if (hf?.status === 'pass') sig.push({ source: 'the sanctions hard filter', exposure: false });
+  else if (hf?.status === 'fail') sig.push({ source: 'the sanctions hard filter', exposure: true });
+  const dq = (gate?.disqualifiers?.items || []).find((i) => i.key === 'sanctions_pep');
+  if (dq?.status === 'clear') sig.push({ source: 'the sanctions / PEP disqualifier', exposure: false });
+  else if (dq?.status === 'flagged') sig.push({ source: 'the sanctions / PEP disqualifier', exposure: true });
+  const am = gate?.adverse_media?.status;
+  if (am === 'clear') sig.push({ source: 'the adverse-media screen', exposure: false });
+  else if (am === 'adverse') sig.push({ source: 'the adverse-media screen', exposure: true });
+  return sig;
+}
+
+function sanctionsConsistencyCheck(gate) {
+  const sig = sanctionsSignals(gate);
+  if (sig.length < 2) return null;
+  const clear = sig.filter((s) => !s.exposure).map((s) => s.source);
+  const exposed = sig.filter((s) => s.exposure).map((s) => s.source);
+  if (clear.length && exposed.length) {
+    return check('sanctions_consistency', 'Sanctions, PEP and adverse-media answers agree', 'review',
+      `${clear.join(' and ')} report${clear.length === 1 ? 's' : ''} no exposure, but ${exposed.join(' and ')} report${exposed.length === 1 ? 's' : ''} exposure. Reconcile them before relying on either.`);
+  }
+  return check('sanctions_consistency', 'Sanctions, PEP and adverse-media answers agree', 'pass',
+    exposed.length ? 'All answered screens report exposure.' : 'All answered screens report no exposure.');
+}
+
+// An exposure recorded without the supporting note the form asks for.
+function sanctionsNoteCheck(gate) {
+  const hf = (gate?.hard_filters?.items || []).find((i) => i.key === 'sanctions_export');
+  if (hf?.status !== 'fail' || !blank(hf.detail?.note)) return null;
+  return check('sanctions_note', 'Sanctions exposure has a supporting note', 'review',
+    'A sanctions or reputational exposure is recorded without a supporting note.');
+}
+
+function riskRegisterCheck(data) {
+  const r = evaluateRiskRegister(data);
+  return check('risk_register', 'Risk register has 5-8 risks, each owned, rated and mitigated', r.status === 'pass' ? 'pass' : 'review', r.detail);
 }
 
 function risksChecks(data, gate) {
   const out = [];
   const hf = gate?.hard_filters;
   if (hf) {
-    const failed = [...(hf.failed || []), ...(hf.items || []).filter((i) => i.status === 'flag')];
-    out.push(failed.length === 0
-      ? check('hard_filters', 'Hard filters', 'pass', 'No hard filter is failed.')
-      : check('hard_filters', 'Hard filters', 'review', `Failed or to confirm: ${failed.map((f) => f.label || f.key).join(', ')}.`));
+    const items = hf.items || [];
+    // A failed filter is a FAIL (the recommendation treats it as a stop); a filter
+    // still to be confirmed by hand is a REVIEW.
+    const failedList = (hf.failed && hf.failed.length) ? hf.failed : items.filter((i) => i.status === 'fail');
+    const toConfirm = items.filter((i) => i.status === 'flag');
+    const name = (f) => f.label || f.key;
+    if (failedList.length) {
+      out.push(check('hard_filters', 'Hard filters', 'fail',
+        `Failed: ${failedList.map(name).join(', ')}.${toConfirm.length ? ` To confirm: ${toConfirm.map(name).join(', ')}.` : ''}`));
+    } else if (toConfirm.length) {
+      out.push(check('hard_filters', 'Hard filters', 'review', `To confirm: ${toConfirm.map(name).join(', ')}.`));
+    } else {
+      out.push(check('hard_filters', 'Hard filters', 'pass', 'No hard filter is failed.'));
+    }
   }
   const dq = gate?.disqualifiers;
-  const flagged = (dq?.items || []).filter((i) => i.status === 'flagged');
   if (dq) {
-    out.push(flagged.length === 0
-      ? check('disqualifiers', 'No automatic disqualifier', 'pass', 'None raised.')
-      : check('disqualifiers', 'No automatic disqualifier', 'fail', `Raised: ${flagged.map((f) => f.label || f.key).join(', ')}.`));
+    const items = dq.items || [];
+    const flagged = items.filter((i) => i.status === 'flagged');
+    const notEvaluated = items.filter((i) => i.status === 'not_evaluated');
+    if (flagged.length) {
+      out.push(check('disqualifiers', 'No automatic disqualifier', 'fail', `Raised: ${flagged.map((f) => f.label || f.key).join(', ')}.`));
+    } else if (notEvaluated.length) {
+      // Nothing raised is not the same as nothing checked: an unanswered
+      // disqualifier is not a clear one.
+      out.push(check('disqualifiers', 'No automatic disqualifier', 'review',
+        `${notEvaluated.length} of ${items.length} disqualifiers not yet evaluated: ${notEvaluated.map((f) => f.label || f.key).join(', ')}.`));
+    } else {
+      out.push(check('disqualifiers', 'No automatic disqualifier', 'pass', 'None raised.'));
+    }
   }
+  const consistency = sanctionsConsistencyCheck(gate);
+  if (consistency) out.push(consistency);
+  const note = sanctionsNoteCheck(gate);
+  if (note) out.push(note);
+  out.push(riskRegisterCheck(data));
   return out;
 }
 
@@ -288,7 +691,7 @@ function mandateCheck(gate) {
 }
 
 // All rule-based checks for a tab. Order matters: it is the order shown.
-export function runDeterministicChecks(tabKey, { data = {}, gate = null } = {}) {
+export function runDeterministicChecks(tabKey, { data = {}, gate = null, engine } = {}) {
   if (!tabByKey(tabKey)) return [];
   const out = [checklistCheck(tabKey, gate)];
   if (tabKey === 'executive_summary') {
@@ -300,8 +703,19 @@ export function runDeterministicChecks(tabKey, { data = {}, gate = null } = {}) 
     const m = mandateCheck(gate);
     if (m) out.push(m);
   }
-  if (tabKey === 'financials') out.push(...financialsChecks(data, gate));
-  if (tabKey === 'funding') out.push(...fundingChecks(data, gate));
+  // Only these tabs, only while their rubric is on.
+  if (tabKey === 'opportunity_overview' && isRubricEnabled('opportunity_overview')) out.push(...overviewRubricChecks(data));
+  if (tabKey === 'rationale' && isRubricEnabled('rationale')) out.push(...rationaleRubricChecks(data));
+  if (tabKey === 'financials') {
+    out.push(...financialsChecks(data, gate));
+    // `engine` is the financial engine's result, supplied by the caller. Only this tab, only while its rubric is on.
+    if (isRubricEnabled('financials')) out.push(...financialsRubricChecks(data, engine));
+  }
+  if (tabKey === 'funding') {
+    out.push(...fundingChecks(data, gate));
+    // Only this tab, only while its rubric is on.
+    if (isRubricEnabled('funding')) out.push(...fundingRubricChecks(data));
+  }
   if (tabKey === 'risks') out.push(...risksChecks(data, gate));
   return out;
 }
@@ -356,6 +770,24 @@ export function aiCheckSpecs(tabKey) {
   }
   specs.push({ key: 'consistency', title: 'Content is consistent',
     ask: 'Do the figures and statements on this tab agree with each other and with the attached documents? Name any conflict.' });
+  if (tabKey === 'opportunity_overview' && isRubricEnabled('opportunity_overview')) {
+    specs.push({ key: 'claims_evidenced', title: 'Commercial claims are backed by the documents',
+      ask: 'Judging only from the fields and the attached documents: are the claims made about customers, revenue quality, competitive position or management backed by something in the documents, rather than only stated? Name the claim that matters most and say whether anything supports it. If the documents do not hold the data, begin the detail with "Not enough evidence" and use status "review".' });
+    specs.push({ key: 'dd_red_flags', title: 'No commercial warning signs in the documents',
+      ask: 'Judging only from the attached documents: do they show any of these warning signs: heavy dependence on one customer, weak or falling retention, growth from one-off revenue, dependence on one or two people, an easily replaced product, unusual revenue recognition, or a market in decline? Use "pass" only if the documents hold the data needed to test them and none is present. If the data (customer concentration or retention, for example) is not there, begin the detail with "Not enough evidence" and use status "review". Use "fail" only for a clear warning sign shown in the documents.' });
+  }
+  if (tabKey === 'rationale' && isRubricEnabled('rationale')) {
+    specs.push({ key: 'buy_vs_build_reasoned', title: 'The choice of approach is reasoned',
+      ask: 'Judging only from the material provided (the build, buy or partner choice is shown with it): does the submission explain why the opportunity is pursued this way rather than by building the capability or partnering, say what is actually being acquired or gained (people, technology, customers, market position or a licence), and address how hard the integration will be? Name which of the three is missing. If it cannot be judged from the material, use status "review".' });
+  }
+  if (tabKey === 'funding' && isRubricEnabled('funding')) {
+    specs.push({ key: 'funding_plan_holds', title: 'Funding plan holds together',
+      ask: 'Judging only from the funding plan and documents provided: does the plan hang together? Consider whether it leans on a single source or lender, whether any part depends on a condition not yet met, whether the loan terms (length, currency, repayment) fit what is being funded, and whether the amount asked of Sirius is justified. If the material does not let you judge, use status "review".' });
+  }
+  if (tabKey === 'financials' && isRubricEnabled('financials')) {
+    specs.push({ key: 'assumptions_reasonable', title: 'Assumptions are supported',
+      ask: 'Judging only from the figures and documents provided: are the growth, margin, capex and exit assumptions behind the stated returns backed by evidence in the submission, rather than only asserted? Name the assumption that carries most weight and say whether anything submitted supports it. If nothing does, or it cannot be judged, use status "review".' });
+  }
   return specs;
 }
 
@@ -440,7 +872,7 @@ const asStatus = (v) => {
   return AI_REVIEW_STATUSES.includes(s) ? s : 'review';
 };
 
-export function normaliseValidation(raw, tabKey, documents = null, ruleChecks = []) {
+export function normaliseValidation(raw, tabKey, documents = null, ruleChecks = [], context = null) {
   const specs = aiCheckSpecs(tabKey);
   const got = new Map();
   for (const c of Array.isArray(raw?.checks) ? raw.checks : []) {
@@ -458,6 +890,68 @@ export function normaliseValidation(raw, tabKey, documents = null, ruleChecks = 
     }
     let status = asStatus(c.status);
     let detail = (typeof c.detail === 'string' ? c.detail.trim().slice(0, 400) : '') || 'No detail given.';
+    // Opportunity overview (decision D2): a commercial claim cannot be passed without a document
+    // that can be read, and "no warning signs" cannot be passed unless the documents actually
+    // hold commercial data to test. The model cannot override either; a failed rule check also
+    // rules a pass out.
+    if ((spec.key === 'claims_evidenced' || spec.key === 'dd_red_flags') && status === 'pass') {
+      const snippets = context?.snippets;
+      const attached = !Array.isArray(documents) || documents.length > 0;
+      const readable = snippets === undefined ? attached : hasReadableText(snippets);
+      if (!readable) {
+        return { key: spec.key, title: spec.title, status: 'review', source: 'ai',
+          detail: `${NOT_ENOUGH_EVIDENCE}: ${attached ? 'the attached documents could not be read' : 'no document is attached'}, so this cannot be judged from the fields alone.` };
+      }
+      if (spec.key === 'dd_red_flags' && !hasCommercialEvidence(snippets)) {
+        return { key: spec.key, title: spec.title, status: 'review', source: 'ai',
+          detail: `${NOT_ENOUGH_EVIDENCE}: the documents give no customer, retention, contract or recurring-revenue figures to test the warning signs against.` };
+      }
+      if (ruleFailed.length) {
+        status = 'review';
+        detail = `A rule-based check failed (${ruleFailed.map((r) => r.title || r.key).join(', ')}), so this cannot be called clear. ${detail}`.slice(0, 400);
+      }
+    }
+    // Nothing written about the reason and no document to judge it from is not a pass,
+    // whatever the model says; and a failed rule check also rules it out.
+    if (spec.key === 'buy_vs_build_reasoned' && status === 'pass') {
+      const d = context?.data || {};
+      const hasText = ['narrative_why_now', 'narrative_why_us', 'rationale_evidence', 'strategy_link', 'cost_of_not_doing'].some((k) => !blank(d[k]));
+      const hasDocs = !Array.isArray(documents) || documents.length > 0;
+      if (!hasText && !hasDocs) {
+        return { key: spec.key, title: spec.title, status: 'review', detail: 'No rationale is written and no supporting document is attached, so the choice of approach could not be judged.', source: 'ai' };
+      }
+      if (ruleFailed.length) {
+        status = 'review';
+        detail = `A rule-based check failed (${ruleFailed.map((r) => r.title || r.key).join(', ')}), so the reasoning cannot be called sound. ${detail}`.slice(0, 400);
+      }
+    }
+    // No funding plan and no document to judge it from is not a pass, whatever the
+    // model says; and a failed rule check also rules it out.
+    if (spec.key === 'funding_plan_holds' && status === 'pass') {
+      const hasPlan = evaluateSourcesUses(context?.data || {}).captured;
+      const hasDocs = !Array.isArray(documents) || documents.length > 0;
+      if (!hasPlan && !hasDocs) {
+        return { key: spec.key, title: spec.title, status: 'review', detail: 'No funding plan is captured and no funding document is attached, so the plan could not be judged.', source: 'ai' };
+      }
+      if (ruleFailed.length) {
+        status = 'review';
+        detail = `A rule-based check failed (${ruleFailed.map((r) => r.title || r.key).join(', ')}), so the funding plan cannot be called sound. ${detail}`.slice(0, 400);
+      }
+    }
+    // Nothing to support the assumptions with (no document and no financials grid) is
+    // not a pass, whatever the model says; and a failed rule check also rules it out.
+    if (spec.key === 'assumptions_reasonable' && status === 'pass') {
+      const grid = context?.data?.financials;
+      const hasGrid = grid && typeof grid === 'object' && Object.keys(grid).length > 0;
+      const hasDocs = !Array.isArray(documents) || documents.length > 0;
+      if (!hasDocs && !hasGrid) {
+        return { key: spec.key, title: spec.title, status: 'review', detail: 'No financial document or financials grid is attached, so the assumptions could not be checked against evidence.', source: 'ai' };
+      }
+      if (ruleFailed.length) {
+        status = 'review';
+        detail = `A rule-based check failed (${ruleFailed.map((r) => r.title || r.key).join(', ')}), so the assumptions cannot be called supported. ${detail}`.slice(0, 400);
+      }
+    }
     if (spec.key === 'consistency' && status === 'pass' && ruleFailed.length) {
       status = 'review';
       detail = `A rule-based check failed (${ruleFailed.map((r) => r.title || r.key).join(', ')}), so the content cannot be called consistent. ${detail}`.slice(0, 400);
@@ -568,7 +1062,7 @@ export function allowedSources({ tabKey, documents = [], passages = [] } = {}) {
   const ctx = buildTabContext(tabKey, {});
   // The prompt lists structured blocks by key (e.g. ask_aed), so a model that
   // cites the key it was shown is citing a real source of this tab.
-  const fields = ctx ? [...ctx.fields.map((f) => f.label), ...(tabByKey(tabKey)?.extra || [])] : [];
+  const fields = ctx ? [...ctx.fields.map((f) => f.label), ...(tabByKey(tabKey) ? extraKeysOf(tabByKey(tabKey)) : [])] : [];
   const docs = tabDocuments(tabKey, documents).map((d) => d.original_name).filter(Boolean);
   const strategy = passages.map((p) => p.document_name).filter(Boolean);
   return [...new Set([...fields, ...docs, ...strategy])];
@@ -611,6 +1105,7 @@ export function buildAnalysisPrompt({ tabKey, data = {}, documents = [], snippet
   return [
     `You are an investment analyst at Sirius reviewing the "${tab.label}" tab of a subsidiary's opportunity submission. ${GUARD}`,
     `Research focus for this tab only: ${ANALYSIS_FOCUS[tabKey]}`,
+    ...(rubricGuidance(tabKey) ? [rubricGuidance(tabKey)] : []),
     `Produce: a recommendation (rating ${ANALYSIS_RATINGS.join(' / ')} and a two-sentence summary); up to ${ANALYSIS_MAX_ITEMS} rated items; ` +
       `key figures worth highlighting (only figures that appear in the material); and low-confidence points (where the evidence is the subsidiary's own statement only). ` +
       `For each item give: why it has that rating, what is missing, what to ask the subsidiary, what you found in the material, and what would change the rating. ` +
@@ -656,7 +1151,7 @@ export function normaliseAnalysis(raw, { tabKey, documents = [], passages = [], 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
   const allowed = allowedSources({ tabKey, documents, passages });
   const rate = (r) => (ANALYSIS_RATINGS.includes(r) ? r : 'Not enough evidence');
-  const items = (Array.isArray(raw.items) ? raw.items : []).slice(0, ANALYSIS_MAX_ITEMS).map((it) => {
+  const modelItems = (Array.isArray(raw.items) ? raw.items : []).slice(0, ANALYSIS_MAX_ITEMS).map((it) => {
     const sources = cleanSources(it?.sources, allowed);
     let rating = rate(it?.rating);
     if (rating === 'Strong' && sources.length === 0) rating = 'Adequate';
@@ -674,9 +1169,18 @@ export function normaliseAnalysis(raw, { tabKey, documents = [], passages = [], 
     };
   }).filter((it) => it.summary || it.why);
 
+  // Opportunity overview (decision D2): when no attached document holds commercial data, nothing
+  // about customers, revenue quality or retention can be rated Strong, and the output says so in
+  // the existing low-confidence list. Applied only to this tab, only while its rubric is on, and
+  // only when the caller supplied the document text.
+  const noCommercialData = tabKey === 'opportunity_overview' && isRubricEnabled(tabKey)
+    && snippets && typeof snippets === 'object' && !hasCommercialEvidence(snippets);
+  const items = noCommercialData ? modelItems.map((i) => (i.rating === 'Strong' ? { ...i, rating: 'Adequate' } : i)) : modelItems;
+
   let overall = rate(raw.recommendation?.rating);
   if (items.length === 0) overall = 'Not enough evidence';
   else if (overall === 'Strong' && (items.some((i) => i.rating === 'Weak') || !items.some((i) => i.sources.length > 0))) overall = 'Adequate';
+  if (noCommercialData && overall === 'Strong') overall = 'Adequate';
 
   const haystack = data ? materialText(tabKey, data, snippets) : null;
   return {
@@ -685,9 +1189,12 @@ export function normaliseAnalysis(raw, { tabKey, documents = [], passages = [], 
       .map((k) => ({ label: str(k?.label, 80), value: str(k?.value, 60), note: str(k?.note, 160) }))
       .filter((k) => k.label && k.value && (haystack === null || figureSupported(k.value, haystack))),
     items,
-    low_confidence: (Array.isArray(raw.low_confidence) ? raw.low_confidence : []).slice(0, 6)
-      .map((l) => ({ label: str(l?.label, 80), note: str(l?.note, 200), level: CONFIDENCE_LEVELS.includes(l?.level) ? l.level : 'Low' }))
-      .filter((l) => l.label),
+    low_confidence: [
+      ...(noCommercialData ? [{ label: 'Commercial evidence', note: `${NOT_ENOUGH_EVIDENCE}: no attached document gives customer, revenue-quality or retention figures, so those points cannot be rated.`, level: 'Low' }] : []),
+      ...(Array.isArray(raw.low_confidence) ? raw.low_confidence : []).slice(0, 6)
+        .map((l) => ({ label: str(l?.label, 80), note: str(l?.note, 200), level: CONFIDENCE_LEVELS.includes(l?.level) ? l.level : 'Low' }))
+        .filter((l) => l.label),
+    ].slice(0, 6),
     data_gaps: data ? dataGaps(tabKey, data) : [],
   };
 }
@@ -792,7 +1299,80 @@ export function presentResult(row, currentHash) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// "Checked against" (reviewer workspace). Each validation check names the
+// submitted values it was judged on, so a reviewer can see the evidence beside
+// the verdict. Derived at read time from the live opportunity data, never stored
+// and never sent to a model, so it also works for results saved before this
+// existed. A check with no mapped input (e.g. the document-slot check) simply
+// carries an empty list.
+// ---------------------------------------------------------------------------
+export const CHECK_INPUTS = {
+  mandate_rules: ['sector', 'geography', 'total_commitment_aed'],
+  headline_returns: ['exec_summary_headline_value', 'return_irr_base', 'return_roic_base', 'return_payback_years'],
+  commitment_split: ['total_commitment_aed', 'funding_source', 'ask_aed', 'sirius_capital_aed'],
+  sources_uses: ['total_commitment_aed', 'sirius_capital_aed'],
+  ask_within_total: ['total_commitment_aed', 'ask_aed'],
+  downside_hurdles: ['return_irr_downside', 'return_roic_downside', 'return_payback_downside'],
+  returns_captured: ['return_irr_base', 'return_irr_upside', 'return_irr_downside'],
+  hard_filters: ['hard_filter_sanctions', 'hard_filter_structuring', 'hard_filter_portfolio_conflict'],
+  disqualifiers: ['disqualifier_sanctions_pep', 'disqualifier_minority_protections', 'disqualifier_undisclosed_related_party', 'disqualifier_licence_transferable'],
+  sanctions_consistency: ['hard_filter_sanctions', 'disqualifier_sanctions_pep', 'adverse_media_confirmation'],
+  sanctions_note: ['hard_filter_sanctions', 'hard_filter_sanctions_note'],
+  risk_register: ['risk_register'],
+  intent_fit: ['narrative_what', 'strategic_objective', 'strategy_link'],
+  fin_scenario_order: ['return_irr_base', 'return_irr_upside', 'return_irr_downside', 'return_roic_base', 'return_roic_upside', 'return_roic_downside', 'return_moic_base', 'return_moic_upside', 'return_moic_downside', 'return_payback_years', 'return_payback_upside', 'return_payback_downside'],
+  fin_returns_math: ['return_irr_base', 'return_moic_base', 'return_irr_upside', 'return_moic_upside', 'return_irr_downside', 'return_moic_downside'],
+  fin_accretion_sign: ['accretion_net_earnings_aed', 'accretion_bps'],
+  fin_fx_peg: ['reporting_currency', 'fx_rate_usd_aed'],
+  financial_sanity: ['entry_valuation_aed', 'entry_multiple', 'exit_multiple', 'entry_valuation_basis', 'wacc_override_pct'],
+  assumptions_reasonable: ['return_irr_base', 'entry_multiple', 'exit_multiple', 'wacc_override_pct'],
+  ov_snapshot_present: ['opportunity_type', 'snapshot_revenue_last_fy_aed', 'snapshot_ebitda_last_fy_aed'],
+  ov_ebitda_vs_revenue: ['snapshot_revenue_last_fy_aed', 'snapshot_ebitda_last_fy_aed'],
+  ov_employees_valid: ['snapshot_employees'],
+  ov_build_buy_reasoned: ['build_buy_partner', 'cost_of_not_doing'],
+  claims_evidenced: ['snapshot_revenue_last_fy_aed', 'snapshot_ebitda_last_fy_aed', 'strategic_objective', 'cost_of_not_doing'],
+  dd_red_flags: ['snapshot_revenue_last_fy_aed', 'snapshot_employees', 'snapshot_current_ownership'],
+  rat_comparables_for_buy: ['build_buy_partner', 'comparable_transactions'],
+  rat_rationale_evidenced: ['strategy_link', 'rationale_evidence', 'market_data_evidence'],
+  rat_valuation_basis: ['entry_valuation_method', 'entry_valuation_basis'],
+  buy_vs_build_reasoned: ['build_buy_partner', 'cost_of_not_doing', 'strategy_link', 'narrative_why_now', 'narrative_why_us'],
+  fund_indicative_share: ['funding_sources_status', 'sirius_capital_aed', 'total_commitment_aed'],
+  fund_contingency: ['total_commitment_aed', 'ask_aed'],
+  fund_status_consistent: ['funding_sources_status', 'sirius_capital_aed'],
+  funding_plan_holds: ['total_commitment_aed', 'ask_aed', 'sirius_capital_aed', 'funding_sources_status', 'budget_status'],
+  consistency: ['total_commitment_aed', 'ask_aed', 'funding_source'],
+};
+
+const CHECKED_VALUE_CHARS = 140;
+
+const FIELD_LABEL = new Map(INTAKE_FIELDS.map((f) => [f.key, f.label]));
+const FIELD_OPTIONS = new Map(INTAKE_FIELDS.filter((f) => Array.isArray(f.options)).map((f) => [f.key, new Map(f.options.map((o) => [o.value, o.label]))]));
+
+function checkedValue(key, value) {
+  if (blank(value) || typeof value === 'object') return null;
+  const shown = FIELD_OPTIONS.get(key)?.get(String(value)) ?? String(value);
+  return shown.length > CHECKED_VALUE_CHARS ? shown.slice(0, CHECKED_VALUE_CHARS - 1).trimEnd() + '…' : shown;
+}
+
+/** The labelled values a check was judged on: [{ label, value }]. Empty values are left out. */
+export function checkedAgainst(checkKey, data = {}) {
+  const out = [];
+  for (const key of CHECK_INPUTS[checkKey] || []) {
+    const value = checkedValue(key, data[key]);
+    if (value !== null) out.push({ label: FIELD_LABEL.get(key) || key, value });
+  }
+  return out;
+}
+
+/** A presented validation result with `checked_against` on every check. */
+export function withCheckedAgainst(presented, data = {}) {
+  if (!presented || !Array.isArray(presented.checks)) return presented;
+  return { ...presented, checks: presented.checks.map((c) => ({ ...c, checked_against: checkedAgainst(c.key, data) })) };
+}
+
 export default {
+  CHECK_INPUTS, checkedAgainst, withCheckedAgainst,
   AI_TABS, AI_TAB_KEYS, tabByKey, tabFields, buildTabContext, tabDocuments, hashTabInputs, isStale,
   runDeterministicChecks, aiCheckSpecs, buildValidationPrompt, normaliseValidation, overallStatus, presentResult,
   buildAnalysisPrompt, normaliseAnalysis, buildQaPrompt, normaliseQa, cleanQuestion, checkQuestion, isDuplicateQuestion,

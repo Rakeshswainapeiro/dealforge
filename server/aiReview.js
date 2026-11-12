@@ -7,7 +7,7 @@ import { writeAudit } from './audit.js';
 import { resolveActor } from './users.js';
 import { rateLimit } from './security.js';
 import { evaluateGate, listDocuments } from './gate.js';
-import { loadOpportunity } from './qa.js';
+import { loadOpportunity, openThread } from './qa.js';
 import { callLLM, isAiConfigured } from './integrations.js';
 import { loadSiriusMandateConfig } from './mandate.js';
 import { loadStrategyCorpus, searchStrategyCorpus } from './strategy.js';
@@ -20,7 +20,17 @@ import {
   buildValidationPrompt, normaliseValidation, overallStatus, presentResult,
   ANALYSIS_SCHEMA, QA_SCHEMA, SUGGESTED_QUESTIONS, buildAnalysisPrompt, normaliseAnalysis,
   buildQaPrompt, normaliseQa, checkQuestion, embeddedInstructionsCheck, isDuplicateQuestion, appendQaTurns, presentQa,
+  withCheckedAgainst, AI_TABS,
 } from './config/aiReview.js';
+import { isReviewer, isAdmin, isProducerFor } from './config/workflowStates.js';
+import { onSubmit, onTransition } from './lifecycle.js';
+import { canSeeInternalAssessment } from './config/aiVisibility.js';
+import {
+  AI_DECISION_ENTITY, validateDecision, aiStatusOf, latestDecisions, buildOverview,
+} from './config/aiReviewDecisions.js';
+import { evidenceRouter, getExtractedText, runEvidence, isEvidenceRunning, buildEvidenceRecommendation, evaluateFinancialsForReview } from './aiEvidence.js';
+import { isRubricEnabled, rubricAuditFields } from './config/aiRubrics.js';
+import { EXTRACTABLE_EXTENSIONS } from './documentExtract.js';
 
 // ---------------------------------------------------------------------------
 // Per-tab AI review API (/api/ai-review).
@@ -66,9 +76,18 @@ aiReviewRouter.use(async (req, res, next) => {
   try {
     req.actor = await resolveActor(req);
     if (!req.actor) return res.status(401).json({ error: 'No authenticated user could be resolved' });
+    // Internal AI validation, analysis, Q&A and reviewer decisions belong to the
+    // Sirius Investment Team. The subsidiary Preparer is refused here, before any
+    // opportunity is loaded or any model is called.
+    if (!canSeeInternalAssessment(req.actor)) {
+      return res.status(403).json({ error: 'Only the Sirius Investment Team may use the internal AI review' });
+    }
     next();
   } catch (err) { next(err); }
 });
+
+// The evidence pipeline (extraction, financials, research, comparison): same Sirius-only guard.
+aiReviewRouter.use(evidenceRouter);
 
 function sendErr(res, err) { res.status(err.status || 500).json({ error: err.message, ...(err.data || {}) }); }
 
@@ -87,11 +106,16 @@ const resultId = (opportunityId, tab, kind) => `air-${opportunityId}-${tab}-${ki
 // Documents are read only to give the model something to judge: text-like files
 // and .xlsx are read, other formats are judged on name and type. Infected files
 // and Q&A attachments are never read.
-async function readSnippet(doc) {
+async function readSnippet(doc, opp = null, actor = null) {
   try {
     if (doc.scan_verdict === 'infected') return null;
     if (String(doc.requirement_key || '').startsWith('qa_attachment:')) return null;
     const ext = path.extname(doc.original_name || doc.filename || '').toLowerCase();
+    // PDF, DOCX, PPTX and images (scans, via OCR) are read by the extractor, once per document.
+    if (opp && EXTRACTABLE_EXTENSIONS.includes(ext)) {
+      const text = await getExtractedText(opp, doc, actor);
+      return text ? text.slice(0, DOC_SNIPPET_CHARS) : null;
+    }
     const textLike = ['.txt', '.md', '.csv', '.tsv', '.json'].includes(ext);
     if (!textLike && ext !== '.xlsx') return null;
     let buffer;
@@ -126,9 +150,9 @@ async function loadReviewInputs(opp) {
 // The material a model call on one tab reads: that tab's documents (read where
 // the format allows), the Sirius strategy passages nearest the tab's text and
 // the mandate. Nothing outside the opportunity's own org scope is loaded.
-async function gatherMaterial(opp, tab, { data, documents, theme }) {
+async function gatherMaterial(opp, tab, { data, documents, theme, actor = null }) {
   const snippets = {};
-  for (const d of tabDocuments(tab, documents)) snippets[d.id] = await readSnippet(d);
+  for (const d of tabDocuments(tab, documents)) snippets[d.id] = await readSnippet(d, opp, actor);
   const corpus = await loadStrategyCorpus(opp.owner_org_id).catch(() => ({ passages: [] }));
   const ctx = buildTabContext(tab, data);
   const query = ctx.fields.map((f) => (typeof f.value === 'string' ? f.value : '')).join(' ').slice(0, 1500);
@@ -152,114 +176,224 @@ async function saveResult({ opp, tab, kind, payload, actor }) {
 
 async function loadResults(opportunityId) {
   const { rows } = await pool.query(
-    "SELECT id, data FROM entity_record WHERE entity = $1 AND deleted = false AND data->>'opportunity_id' = $2",
+    "SELECT id, data FROM entity_record WHERE entity = $1 AND deleted = false AND data->>'opportunity_id' = $2 AND COALESCE(data->>'tab','') <> '__opp__'",
     [AI_REVIEW_ENTITY, opportunityId]
   );
   return rows.map((r) => ({ id: r.id, ...r.data }));
 }
 
+// Validation of one tab: rule checks plus (when a model is approved) the model
+// checks. Stored as the tab's latest validation result. Shared by the reviewer's
+// manual run and the automatic run after submission.
+export async function runValidation(opp, tab, actor, trigger = 'manual') {
+  const { data, gate, documents, theme } = await loadReviewInputs(opp);
+  const inputHash = hashTabInputs(tab, data, documents);
+  // Financials only, and only while its rubric is on: the financial engine's result feeds the rule checks.
+  const engine = tab === 'financials' && isRubricEnabled(tab) ? await evaluateFinancialsForReview(opp, documents, actor) : undefined;
+  const ruleChecks = runDeterministicChecks(tab, { data, gate, engine });
+  let aiChecks = [];
+  let aiStatus = 'ok';
+  if (!deps.isAiConfigured()) {
+    aiStatus = 'not_configured';
+  } else {
+    try {
+      const material = await gatherMaterial(opp, tab, { data, documents, theme, actor });
+      const embedded = embeddedInstructionsCheck([
+        ...buildTabContext(tab, data).fields.map((f) => ({ where: f.label, text: typeof f.value === 'string' ? f.value : '' })),
+        ...tabDocuments(tab, documents).map((d) => ({ where: d.original_name, text: material.snippets[d.id] || '' })),
+      ]);
+      if (embedded) ruleChecks.push(embedded);
+      const prompt = buildValidationPrompt({ tabKey: tab, data, documents, ruleChecks, ...material });
+      const raw = await deps.callLLM({ prompt, response_json_schema: VALIDATION_SCHEMA, actor });
+      aiChecks = normaliseValidation(raw, tab, tabDocuments(tab, documents), ruleChecks, { data, snippets: material.snippets });
+    } catch (err) {
+      // A provider that is unapproved, unreachable or answers badly never
+      // fails the run: the rule-based checks stand and the card says why.
+      aiStatus = err.status === 403 ? 'not_approved' : err.status === 429 ? 'rate_limited' : 'unavailable';
+      console.warn('[ai-review] model check failed:', err.message);
+    }
+  }
+  const checks = [...ruleChecks, ...aiChecks];
+  const saved = await saveResult({
+    opp, tab, kind: 'validation', actor,
+    payload: {
+      status: overallStatus(checks), checks, ai_status: aiStatus,
+      input_hash: inputHash, ran_at: new Date().toISOString(), ran_by: actor.email, trigger,
+    },
+  });
+  // The audit row records that a run happened and its outcome, not the content.
+  await writeAudit({
+    entity: 'DealOpportunity', entityId: opp.id, action: 'ai_validation_run',
+    actor, orgId: opp.owner_org_id,
+    after: { tab, trigger, status: saved.status, ai_status: aiStatus, checks: checks.length, ...rubricAuditFields(tab) },
+  });
+  return { saved, data, inputHash, aiStatus };
+}
+
+// Analysis of one tab: reads only that tab, its documents and the Sirius strategy
+// library. A failed run never replaces a good earlier analysis.
+export async function runAnalysis(opp, tab, actor, trigger = 'manual') {
+  const { data, gate, documents, theme } = await loadReviewInputs(opp);
+  const inputHash = hashTabInputs(tab, data, documents);
+  let analysis = null;
+  let aiStatus = 'ok';
+  if (!deps.isAiConfigured()) {
+    aiStatus = 'not_configured';
+  } else {
+    try {
+      const material = await gatherMaterial(opp, tab, { data, documents, theme, actor });
+      const engine = tab === 'financials' && isRubricEnabled(tab) ? await evaluateFinancialsForReview(opp, documents, actor) : undefined;
+      const ruleChecks = runDeterministicChecks(tab, { data, gate, engine });
+      const prompt = buildAnalysisPrompt({ tabKey: tab, data, documents, ruleChecks, ...material });
+      const raw = await deps.callLLM({ prompt, response_json_schema: ANALYSIS_SCHEMA, actor });
+      analysis = normaliseAnalysis(raw, { tabKey: tab, documents, passages: material.passages, data, snippets: material.snippets });
+    } catch (err) {
+      aiStatus = err.status === 403 ? 'not_approved' : err.status === 429 ? 'rate_limited' : 'unavailable';
+      console.warn('[ai-review] analysis failed:', err.message);
+    }
+  }
+  if (!analysis && aiStatus !== 'not_configured') {
+    const prev = (await loadResults(opp.id)).find((r) => r.tab === tab && r.kind === 'analysis' && r.analysis);
+    if (prev) {
+      await writeAudit({
+        entity: 'DealOpportunity', entityId: opp.id, action: 'ai_analysis_run',
+        actor, orgId: opp.owner_org_id, after: { tab, trigger, ai_status: aiStatus, kept_previous: true, ...rubricAuditFields(tab) },
+      });
+      return { saved: prev, inputHash, aiStatus, keptPrevious: true };
+    }
+  }
+  const saved = await saveResult({
+    opp, tab, kind: 'analysis', actor,
+    payload: {
+      status: analysis?.recommendation?.rating || null, analysis, ai_status: aiStatus,
+      input_hash: inputHash, ran_at: new Date().toISOString(), ran_by: actor.email, trigger,
+    },
+  });
+  await writeAudit({
+    entity: 'DealOpportunity', entityId: opp.id, action: 'ai_analysis_run',
+    actor, orgId: opp.owner_org_id,
+    after: { tab, trigger, ai_status: aiStatus, rating: analysis?.recommendation?.rating || null, items: analysis?.items?.length || 0, ...rubricAuditFields(tab) },
+  });
+  return { saved, inputHash, aiStatus, keptPrevious: false };
+}
+
 // POST /api/ai-review/opportunities/:id/validate  { tab, trigger? }
-// Runs validation on one tab and returns the stored result.
 aiReviewRouter.post('/opportunities/:id/validate', aiReviewLimit, async (req, res) => {
   try {
     const tab = requireTab(req.body?.tab);
     const trigger = req.body?.trigger === 'auto_save' ? 'auto_save' : 'manual';
     const opp = await loadOpportunity(req.params.id, req.actor);
-    const { data, gate, documents, theme } = await loadReviewInputs(opp);
-    const inputHash = hashTabInputs(tab, data, documents);
-
-    const ruleChecks = runDeterministicChecks(tab, { data, gate });
-    let aiChecks = [];
-    let aiStatus = 'ok';
-    if (!deps.isAiConfigured()) {
-      aiStatus = 'not_configured';
-    } else {
-      try {
-        const material = await gatherMaterial(opp, tab, { data, documents, theme });
-        const embedded = embeddedInstructionsCheck([
-          ...buildTabContext(tab, data).fields.map((f) => ({ where: f.label, text: typeof f.value === 'string' ? f.value : '' })),
-          ...tabDocuments(tab, documents).map((d) => ({ where: d.original_name, text: material.snippets[d.id] || '' })),
-        ]);
-        if (embedded) ruleChecks.push(embedded);
-        const prompt = buildValidationPrompt({ tabKey: tab, data, documents, ruleChecks, ...material });
-        const raw = await deps.callLLM({ prompt, response_json_schema: VALIDATION_SCHEMA, actor: req.actor });
-        aiChecks = normaliseValidation(raw, tab, tabDocuments(tab, documents), ruleChecks);
-      } catch (err) {
-        // A provider that is unapproved, unreachable or answers badly never
-        // fails the run: the rule-based checks stand and the card says why.
-        aiStatus = err.status === 403 ? 'not_approved' : err.status === 429 ? 'rate_limited' : 'unavailable';
-        console.warn('[ai-review] model check failed:', err.message);
-      }
-    }
-
-    const checks = [...ruleChecks, ...aiChecks];
-    const saved = await saveResult({
-      opp, tab, kind: 'validation', actor: req.actor,
-      payload: {
-        status: overallStatus(checks), checks, ai_status: aiStatus,
-        input_hash: inputHash, ran_at: new Date().toISOString(), ran_by: req.actor.email, trigger,
-      },
-    });
-    // The audit row records that a run happened and its outcome, not the content.
-    await writeAudit({
-      entity: 'DealOpportunity', entityId: opp.id, action: 'ai_validation_run',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { tab, trigger, status: saved.status, ai_status: aiStatus, checks: checks.length },
-    });
-    res.json({ result: presentResult(saved, inputHash) });
+    const { saved, data, inputHash } = await runValidation(opp, tab, req.actor, trigger);
+    res.json({ result: withCheckedAgainst(presentResult(saved, inputHash), data) });
   } catch (err) { sendErr(res, err); }
 });
 
 // POST /api/ai-review/opportunities/:id/analyse  { tab }
-// "AI research" on one tab: reads only that tab, its documents and the Sirius
-// strategy library. Needs the model; with none configured it says so.
 aiReviewRouter.post('/opportunities/:id/analyse', aiReviewLimit, async (req, res) => {
   try {
     const tab = requireTab(req.body?.tab);
     const opp = await loadOpportunity(req.params.id, req.actor);
-    const { data, gate, documents, theme } = await loadReviewInputs(opp);
-    const inputHash = hashTabInputs(tab, data, documents);
-    let analysis = null;
-    let aiStatus = 'ok';
-    if (!deps.isAiConfigured()) {
-      aiStatus = 'not_configured';
-    } else {
-      try {
-        const material = await gatherMaterial(opp, tab, { data, documents, theme });
-        const ruleChecks = runDeterministicChecks(tab, { data, gate });
-        const prompt = buildAnalysisPrompt({ tabKey: tab, data, documents, ruleChecks, ...material });
-        const raw = await deps.callLLM({ prompt, response_json_schema: ANALYSIS_SCHEMA, actor: req.actor });
-        analysis = normaliseAnalysis(raw, { tabKey: tab, documents, passages: material.passages, data, snippets: material.snippets });
-      } catch (err) {
-        aiStatus = err.status === 403 ? 'not_approved' : err.status === 429 ? 'rate_limited' : 'unavailable';
-        console.warn('[ai-review] analysis failed:', err.message);
+    const out = await runAnalysis(opp, tab, req.actor, 'manual');
+    res.json({ result: presentResult(out.saved, out.inputHash), ...(out.keptPrevious ? { run_error: out.aiStatus } : {}) });
+  } catch (err) { sendErr(res, err); }
+});
+
+// ---------------------------------------------------------------------------
+// Automatic run after submission. When the Preparer submits, every tab is
+// validated and analysed in the background by the platform (not by the Preparer,
+// who never sees the results). A transient provider failure is retried once;
+// whatever happens is stored per tab, so a failed tab shows its reason and can be
+// re-run by a reviewer. The submit response never waits for the model.
+// ---------------------------------------------------------------------------
+const SYSTEM_ACTOR = Object.freeze({ id: null, email: 'system@dealforge.ai-review', roles: [], membership: [] });
+const TRANSIENT = new Set(['unavailable', 'rate_limited']);
+const autoRunning = new Set();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export async function runAllTabs(opportunityId, actor = SYSTEM_ACTOR, { trigger = 'auto_submit', onlyStale = false } = {}) {
+  if (autoRunning.has(opportunityId)) return { skipped: true, reason: 'already_running' };
+  autoRunning.add(opportunityId);
+  const summary = { tabs: {}, failed: 0 };
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM entity_record WHERE entity = 'DealOpportunity' AND id = $1 AND deleted = false", [opportunityId]);
+    const opp = rows[0];
+    if (!opp) return { skipped: true, reason: 'not_found' };
+    const retryMs = Number(process.env.AI_AUTO_RETRY_MS ?? 3000);
+    const runActor = { ...actor, org_id: opp.owner_org_id };
+    const stored = onlyStale ? await loadResults(opp.id) : [];
+    const { data, documents } = onlyStale ? await loadReviewInputs(opp) : { data: null, documents: null };
+    for (const t of AI_TABS) {
+      if (onlyStale) {
+        const fresh = (kind) => stored.some((r) => r.tab === t.key && r.kind === kind && r.input_hash === hashTabInputs(t.key, data, documents)
+          && (kind !== 'validation' || !r.ai_status || r.ai_status === 'ok' || r.ai_status === 'not_configured'));
+        if (fresh('validation') && fresh('analysis')) { summary.tabs[t.key] = 'current'; continue; }
       }
-    }
-    // A failed run never replaces a good earlier analysis; the earlier one is
-    // returned with the reason this run failed.
-    if (!analysis && aiStatus !== 'not_configured') {
-      const prev = (await loadResults(opp.id)).find((r) => r.tab === tab && r.kind === 'analysis' && r.analysis);
-      if (prev) {
-        await writeAudit({
-          entity: 'DealOpportunity', entityId: opp.id, action: 'ai_analysis_run',
-          actor: req.actor, orgId: opp.owner_org_id, after: { tab, ai_status: aiStatus, kept_previous: true },
-        });
-        return res.json({ result: presentResult(prev, inputHash), run_error: aiStatus });
+      const outcome = {};
+      for (const [name, run] of [['validation', runValidation], ['analysis', runAnalysis]]) {
+        try {
+          let out = await run(opp, t.key, runActor, trigger);
+          if (TRANSIENT.has(out.aiStatus) && retryMs >= 0) { await sleep(retryMs); out = await run(opp, t.key, runActor, trigger); }
+          outcome[name] = out.aiStatus;
+          if (out.aiStatus !== 'ok' && out.aiStatus !== 'not_configured') summary.failed += 1;
+        } catch (err) {
+          outcome[name] = 'error';
+          summary.failed += 1;
+          console.warn(`[ai-review] auto ${name} on ${t.key} failed:`, err.message);
+        }
       }
+      summary.tabs[t.key] = outcome;
     }
-    const saved = await saveResult({
-      opp, tab, kind: 'analysis', actor: req.actor,
-      payload: {
-        status: analysis?.recommendation?.rating || null, analysis, ai_status: aiStatus,
-        input_hash: inputHash, ran_at: new Date().toISOString(), ran_by: req.actor.email, trigger: 'manual',
-      },
-    });
+    // Evidence pipeline (extraction, calculations, research, comparison). Isolated:
+    // whatever it does, the per-tab results above stand. A re-run after the Preparer
+    // answers does not repeat paid web research.
+    try {
+      summary.evidence = await runEvidence(opp.id, runActor, {
+        trigger, steps: onlyStale ? ['extraction', 'financials', 'comparison', 'recommendation'] : undefined,
+      });
+    } catch (err) { console.warn('[ai-review] evidence pipeline failed:', err.message); }
     await writeAudit({
-      entity: 'DealOpportunity', entityId: opp.id, action: 'ai_analysis_run',
-      actor: req.actor, orgId: opp.owner_org_id,
-      after: { tab, ai_status: aiStatus, rating: analysis?.recommendation?.rating || null, items: analysis?.items?.length || 0 },
+      entity: 'DealOpportunity', entityId: opp.id, action: 'ai_auto_run', actor: runActor, orgId: opp.owner_org_id,
+      after: { trigger, failed: summary.failed, tabs: summary.tabs },
+    }).catch(() => {});
+    return summary;
+  } finally {
+    autoRunning.delete(opportunityId);
+  }
+}
+
+// Start the automatic run once a submission commits. Skipped for trusted loaders
+// (sample seed, bulk import: no gate) and when AI_AUTO_RUN=0.
+onSubmit({
+  afterCommit: async ({ row, gate }) => {
+    if (!gate || process.env.AI_AUTO_RUN === '0' || !row?.id) return;
+    setImmediate(() => {
+      runAllTabs(row.id).catch((err) => console.warn('[ai-review] automatic run failed:', err.message));
     });
-    res.json({ result: presentResult(saved, inputHash) });
+  },
+});
+
+// When the Preparer answers an information request, only the tabs whose content
+// changed (or whose earlier run failed) are re-run.
+onTransition(async ({ row, rule }) => {
+  if (rule?.action !== 'respond' || process.env.AI_AUTO_RUN === '0' || !row?.id) return;
+  setImmediate(() => {
+    runAllTabs(row.id, SYSTEM_ACTOR, { trigger: 'auto_response', onlyStale: true })
+      .catch((err) => console.warn('[ai-review] automatic re-run failed:', err.message));
+  });
+});
+
+// POST /api/ai-review/opportunities/:id/run-all  { only_stale? }
+// A reviewer starts (or retries) the whole review; runs in the background.
+aiReviewRouter.post('/opportunities/:id/run-all', aiReviewLimit, async (req, res) => {
+  try {
+    const opp = await loadOpportunity(req.params.id, req.actor);
+    if (autoRunning.has(opp.id)) return res.status(202).json({ started: false, already_running: true });
+    setImmediate(() => {
+      runAllTabs(opp.id, req.actor, { trigger: 'manual_all', onlyStale: req.body?.only_stale === true })
+        .catch((err) => console.warn('[ai-review] run-all failed:', err.message));
+    });
+    res.status(202).json({ started: true });
   } catch (err) { sendErr(res, err); }
 });
 
@@ -283,7 +417,7 @@ aiReviewRouter.post('/opportunities/:id/ask', aiReviewLimit, async (req, res) =>
       // click: return the thread as it is instead of asking the model again.
       if (isDuplicateQuestion(history, question)) return { qa: presentQa(existing, inputHash), duplicate: true };
 
-      const material = await gatherMaterial(opp, tab, { data, documents, theme });
+      const material = await gatherMaterial(opp, tab, { data, documents, theme, actor: req.actor });
       const ruleChecks = runDeterministicChecks(tab, { data, gate });
       const prompt = buildQaPrompt({ tabKey: tab, question, history, data, documents, ruleChecks, ...material });
       const raw = await deps.callLLM({ prompt, response_json_schema: QA_SCHEMA, actor: req.actor });
@@ -338,9 +472,98 @@ aiReviewRouter.get('/opportunities/:id/results', async (req, res) => {
       if (!results[row.tab]) continue;
       const hash = hashTabInputs(row.tab, data, documents);
       if (row.kind === mine) qa[row.tab] = presentQa(row, hash);
-      else if (row.kind === 'validation' || row.kind === 'analysis') results[row.tab][row.kind] = presentResult(row, hash);
+      else if (row.kind === 'validation') results[row.tab][row.kind] = withCheckedAgainst(presentResult(row, hash), data);
+      else if (row.kind === 'analysis') results[row.tab][row.kind] = presentResult(row, hash);
     }
-    res.json({ results, qa, suggestions: SUGGESTED_QUESTIONS, tabs: AI_TAB_KEYS });
+    const decisions = latestDecisions(await loadDecisions(opp.id));
+    const hashes = Object.fromEntries(AI_TAB_KEYS.map((t) => [t, hashTabInputs(t, data, documents)]));
+    const overview = buildOverview({ results, decisions, hashes });
+    res.json({ results, qa, suggestions: SUGGESTED_QUESTIONS, tabs: AI_TAB_KEYS, decisions, overview, running: autoRunning.has(opp.id) || isEvidenceRunning(opp.id) });
+  } catch (err) { sendErr(res, err); }
+});
+
+async function loadDecisions(opportunityId, tab = null) {
+  const { rows } = await pool.query(
+    "SELECT id, data FROM entity_record WHERE entity = $1 AND deleted = false AND data->>'opportunity_id' = $2 ORDER BY created_date ASC",
+    [AI_DECISION_ENTITY, opportunityId]
+  );
+  return rows.map((r) => ({ id: r.id, ...r.data })).filter((d) => !tab || d.tab === tab);
+}
+
+// POST /api/ai-review/opportunities/:id/tabs/:tab/review
+// { kind: 'validation'|'analysis', finding_key?, action: 'accept'|'override'|'clarify',
+//   reason?, to_status?, question? }
+// A reviewer accepts an AI finding, overrides it with a written reason, or asks the
+// Preparer for clarification (which opens a Q&A thread on that tab). Every decision
+// is an append-only record plus an audit row; the AI result itself is never edited.
+aiReviewRouter.post('/opportunities/:id/tabs/:tab/review', async (req, res) => {
+  try {
+    const tab = requireTab(req.params.tab);
+    const opp = await loadOpportunity(req.params.id, req.actor);
+    if (!isAdmin(req.actor) && isProducerFor(req.actor, opp.owner_org_id)) {
+      return res.status(403).json({ error: 'The subsidiary that prepared the opportunity cannot review its AI findings (segregation of duties)' });
+    }
+    const kind = req.body?.kind;
+    const stored = (await loadResults(opp.id)).find((r) => r.tab === tab && r.kind === kind);
+    const checked = validateDecision(req.body || {}, { result: stored || null });
+    if (!checked.ok) return res.status(400).json({ error: checked.error });
+    const d = checked.decision;
+    const { data, documents } = await loadReviewInputs(opp);
+    const inputHash = hashTabInputs(tab, data, documents);
+    let threadId = null;
+    if (d.action === 'clarify') {
+      const tabLabel = tabByKey(tab)?.label || tab;
+      const thread = await openThread(opp.id, {
+        subject: ('Clarification needed: ' + tabLabel).slice(0, 200),
+        body: d.question, requires_response: true, section: tab,
+      }, { actor: req.actor });
+      threadId = thread?.id || thread?.thread?.id || null;
+    }
+    const id = `aird-${opp.id}-${tab}-${crypto.randomUUID()}`;
+    const record = {
+      opportunity_id: opp.id, tab, kind: d.kind, finding_key: d.finding_key, action: d.action,
+      reason: d.reason, to_status: d.to_status, question: d.question, thread_id: threadId,
+      from_status: aiStatusOf(stored, d.kind, d.finding_key), input_hash: inputHash,
+      result_ran_at: stored.ran_at || null, by: req.actor.email, at: new Date().toISOString(),
+    };
+    await pool.query(
+      `INSERT INTO entity_record (id, entity, owner_org_id, data, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$5)`,
+      [id, AI_DECISION_ENTITY, opp.owner_org_id, JSON.stringify(record), req.actor.email]
+    );
+    await writeAudit({
+      entity: 'DealOpportunity', entityId: opp.id, action: 'ai_review_' + d.action,
+      actor: req.actor, orgId: opp.owner_org_id,
+      before: { status: record.from_status }, after: { tab, kind: d.kind, finding_key: d.finding_key, to_status: d.to_status, thread_id: threadId },
+      comment: d.reason || d.question,
+    });
+    res.status(201).json({ decision: { id, ...record } });
+  } catch (err) { sendErr(res, err); }
+});
+
+// GET /api/ai-review/opportunities/:id/review-history[?tab=]
+// Every reviewer decision on the AI findings, oldest first (the override history).
+aiReviewRouter.get('/opportunities/:id/review-history', async (req, res) => {
+  try {
+    const opp = await loadOpportunity(req.params.id, req.actor);
+    const tab = req.query.tab ? requireTab(String(req.query.tab)) : null;
+    res.json({ opportunity_id: opp.id, decisions: await loadDecisions(opp.id, tab) });
+  } catch (err) { sendErr(res, err); }
+});
+
+// GET /api/ai-review/opportunities/:id/recommendation
+// The draft Go / Conditional Go / No-Go recommendation (BRD AI-04, AI-05). It is a
+// reviewer feature: the Sirius investment team only. Rule-based, so reading it
+// never calls the model and never changes the opportunity.
+aiReviewRouter.get('/opportunities/:id/recommendation', async (req, res) => {
+  try {
+    const opp = await loadOpportunity(req.params.id, req.actor);
+    if (!isReviewer(req.actor)) {
+      return res.status(403).json({ error: 'Only the Sirius investment team can read the draft recommendation' });
+    }
+    // The rating comes from the deterministic rules; stored research, calculations and
+    // comparison findings only add caution and cited reasons (never read-triggered model calls).
+    res.json({ opportunity_id: opp.id, recommendation: await buildEvidenceRecommendation(opp) });
   } catch (err) { sendErr(res, err); }
 });
 

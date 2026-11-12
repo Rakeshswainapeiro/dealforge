@@ -110,3 +110,14 @@ test('the disclaimer names the hard guarantee', () => {
   assert.ok(COMMENT_VISIBILITY_MESSAGES.disclaimer.includes('subsidiary'));
   assert.ok(COMMENT_VISIBILITY_MESSAGES.internal_hidden.includes('not visible'));
 });
+
+test('a Cluster Head in the Sirius organisation is an authorised reviewer; elsewhere it stays restricted', () => {
+  const sirius = { roles: ['cluster_head', 'opco_signatory'], org_id: 'org-sirius-international-holding-limited' };
+  assert.equal(isSubsidiaryViewer(cfg, sirius), false);
+  assert.equal(mayViewVisibility(cfg, sirius, 'internal'), true);
+  const subsidiary = { roles: ['cluster_head'], org_id: 'org-infinia' };
+  assert.equal(isSubsidiaryViewer(cfg, subsidiary), true);
+  assert.equal(mayViewVisibility(cfg, subsidiary, 'internal'), false);
+  // No organisation on the actor: fail closed.
+  assert.equal(isSubsidiaryViewer(cfg, { roles: ['cluster_head'] }), true);
+});

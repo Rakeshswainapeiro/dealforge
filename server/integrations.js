@@ -19,8 +19,10 @@ import {
 import { UPLOAD_MAX_BYTES, uploadFilter, rateLimit, assertContentMatches } from './security.js';
 import { checkAIProvider, logLLMCall } from './aiGovernance.js';
 import { scrubSecrets } from './config/aiGovernance.js';
+import { resolveAuthToken, forceTokenRefresh, isAtlasEndpoint, getKnownTokens } from './tokenManager.js';
 import { resolveActor } from './users.js';
 import { canConfigure } from './rbac.js';
+import { canSeeInternalAssessment } from './config/aiVisibility.js';
 
 export { UPLOAD_DIR, filesRouter };
 
@@ -187,28 +189,45 @@ export async function callLLM({ prompt, response_json_schema, file_urls = [], co
   const body = { model, messages, temperature: 0.2 };
   if (response_json_schema) body.response_format = { type: 'json_object' };
 
+  // Resolve dynamic token for gateways like Atlas Xailon, or passthrough static key.
+  let activeKey = await resolveAuthToken(base, key);
+  const allKnownKeys = () => [key, activeKey, ...getKnownTokens()].filter(Boolean);
+
   // A failed provider call is logged too (redacted, secrets scrubbed), so a
   // failure is visible in the governed call log and not only in the UI.
   const logFailure = (message) => logLLMCall({
-    model, baseUrl: base, actor, prompt: finalPrompt, error: scrubSecrets(message, [key]), config: gate.config,
+    model, baseUrl: base, actor, prompt: finalPrompt, error: scrubSecrets(message, allKnownKeys()), config: gate.config,
   }).catch(() => {});
 
-  const send = () => fetchWithTimeout(`${base}/chat/completions`, {
+  const send = (token) => fetchWithTimeout(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
   });
 
   let response;
   let payload;
+  let authRetried = false;
   try {
     // A provider rate limit (429) is retried once when the wait is short.
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      response = await send();
+      response = await send(activeKey);
       payload = await response.json().catch(() => ({}));
+
+      // Reactive 401 recovery: if token expired during session, force refresh and retry once
+      if (response.status === 401 && isAtlasEndpoint(base) && !authRetried) {
+        authRetried = true;
+        const freshToken = await forceTokenRefresh(base);
+        if (freshToken) {
+          activeKey = freshToken;
+          attempt -= 1;
+          continue;
+        }
+      }
+
       if (response.status !== 429) break;
       if (payload?.error?.code === 'insufficient_quota' || /no credits|exceeded your current quota/i.test(payload?.error?.message || '')) {
         const error = new Error('The AI provider account has no credits or quota left. Add billing credit with the provider, then re-run.');
@@ -231,7 +250,7 @@ export async function callLLM({ prompt, response_json_schema, file_urls = [], co
   } catch (err) {
     if (err.status === 429 || err.status === 402) throw err;
     if (err.status === 504) { await logFailure(err.message); throw err; }
-    const error = new Error(scrubSecrets(`Failed to reach AI provider at ${base}: ${err.message}`, [key]));
+    const error = new Error(scrubSecrets(`Failed to reach AI provider at ${base}: ${err.message}`, allKnownKeys()));
     error.status = 502;
     await logFailure(error.message);
     throw error;
@@ -239,7 +258,7 @@ export async function callLLM({ prompt, response_json_schema, file_urls = [], co
 
   if (!response.ok) {
     const detail = payload?.error?.message || payload?.message || response.statusText;
-    const error = new Error(scrubSecrets(`AI provider error (${response.status}): ${detail}`, [key]));
+    const error = new Error(scrubSecrets(`AI provider error (${response.status}): ${detail}`, allKnownKeys()));
     error.status = 502;
     await logFailure(error.message);
     throw error;
@@ -280,7 +299,20 @@ export async function callLLM({ prompt, response_json_schema, file_urls = [], co
 // ---------------------------------------------------------------------------
 // InvokeLLM
 // ---------------------------------------------------------------------------
-router.post('/invoke-llm', aiLimit, async (req, res) => {
+
+// The model endpoints are the Sirius team's: a subsidiary Preparer has no screen
+// that needs them, and they would otherwise be a direct, paid line to the model.
+async function requireSiriusTeam(req, res, next) {
+  try {
+    const actor = await resolveActor(req);
+    if (!actor) return res.status(401).json({ error: 'Sign in required' });
+    if (!canSeeInternalAssessment(actor)) return res.status(403).json({ error: 'Only the Sirius Investment Team may call the AI model directly' });
+    req.actor = actor;
+    next();
+  } catch (err) { next(err); }
+}
+
+router.post('/invoke-llm', aiLimit, requireSiriusTeam, async (req, res) => {
   const { prompt, response_json_schema, file_urls, add_context_from_internet } = req.body || {};
   // The endpoint, key and model come from server environment only. A caller
   // may not point the server at another host or supply a credential.
@@ -352,7 +384,7 @@ router.post('/upload-file', uploadLimit, upload.single('file'), async (req, res)
 // ---------------------------------------------------------------------------
 // ExtractDataFromUploadedFile
 // ---------------------------------------------------------------------------
-router.post('/extract-data', aiLimit, async (req, res) => {
+router.post('/extract-data', aiLimit, requireSiriusTeam, async (req, res) => {
   const { file_url, json_schema, model, base_url, api_key } = req.body || {};
   if (!file_url) return res.status(400).json({ status: 'error', details: 'file_url is required' });
 
@@ -437,7 +469,7 @@ router.post('/send-sms', mailLimit, (_req, res) => res.status(501).json({ error:
 // ---------------------------------------------------------------------------
 // GenerateImage
 // ---------------------------------------------------------------------------
-router.post('/generate-image', aiLimit, async (req, res) => {
+router.post('/generate-image', aiLimit, requireSiriusTeam, async (req, res) => {
   const { prompt, size, model, base_url, api_key } = req.body || {};
   const { base, key, model: cfgModel } = aiConfig({ model, base_url, api_key });
   if (!base) {

@@ -14,7 +14,7 @@ import {
   SCORECARD_WEIGHT_TOTAL, SCORECARD_OUTCOMES, SCORECARD_TAG, SCORECARD_OVERRIDE_TAG,
   SCORECARD_LENSES, SCORECARD_LENS_FLOOR,
   SCORECARD_ADJUST_REASON_MIN,
-  validateWeights, capturedScore, proposeScorecardItem, evaluateLenses, evaluateScorecard, buildScorecard, buildScorecardOverride,
+  validateWeights, capturedScore, capturedComment, proposeScorecardItem, evaluateLenses, evaluateScorecard, buildScorecard, buildScorecardOverride,
   defaultScorecardConfig, validateScorecardConfig, resolveScorecardConfig, diffScorecardConfig, buildScorecardConfig,
   SCORECARD_CONFIG_DEFAULT_REVISION,
 } from '../config/scorecard.js';
@@ -335,5 +335,20 @@ describe('scorecard configuration (SCO-05)', () => {
     const rec = buildScorecard({ scores: { alpha: 4 } }, { criteria, version: 'SC-01.9', proposals: { alpha: 4 } });
     assert.equal(rec.version, 'SC-01.9');
     assert.deepEqual(rec.scores, { alpha: 4 });
+  });
+});
+
+describe('recorded adjustment comments are read back (SCO-03)', () => {
+  test('evaluateScorecard returns the written reason for an adjusted criterion, and no change to the total', () => {
+    const scores = Object.fromEntries(SCORECARD_KEYS.map((k) => [k, 3]));
+    const proposals = { ...scores, revenue_scale: 4 };
+    const capture = buildScorecard({ scores, comments: { revenue_scale: 'Revenue is below the plan this year.' } }, { proposals });
+    const out = evaluateScorecard({ scorecard: capture });
+    const rev = out.items.find((i) => i.key === 'revenue_scale');
+    assert.equal(rev.comment, 'Revenue is below the plan this year.');
+    assert.equal(out.items.find((i) => i.key === 'growth_rate').comment, null);
+    assert.equal(out.total, 3);
+    assert.equal(capturedComment({ scorecard: capture }, 'revenue_scale'), 'Revenue is below the plan this year.');
+    assert.equal(capturedComment({}, 'revenue_scale'), null);
   });
 });

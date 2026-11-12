@@ -1136,6 +1136,7 @@ const qa = {
     const qs = new URLSearchParams();
     if (params.status) qs.set('status', params.status);
     if (params.awaitingResponse) qs.set('awaiting_response', '1');
+    if (params.section) qs.set('section', params.section);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return serverFetch(`/api/qa/opportunities/${encodeURIComponent(opportunityId)}/threads${suffix}`);
   },
@@ -1415,7 +1416,7 @@ const aiGovernance = {
   },
 };
 
-// Per-tab AI review on the capture form (advisory; never blocks submission).
+// Per-tab AI review (Sirius Investment Team only; advisory; never blocks submission).
 const aiReview = {
   results(opportunityId) {
     return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/results');
@@ -1435,8 +1436,39 @@ const aiReview = {
       method: 'POST', body: JSON.stringify({ tab, question }),
     });
   },
+  // The draft Go / Conditional Go / No-Go recommendation (reviewers only).
+  recommendation(opportunityId) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/recommendation');
+  },
+  // Extraction, calculations, external research, comparison and the evidence-informed recommendation (Sirius only).
+  evidence(opportunityId) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/evidence');
+  },
+  runEvidence(opportunityId, steps) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/evidence/run', {
+      method: 'POST', body: JSON.stringify(steps ? { steps } : {}),
+    });
+  },
+  engineConfig() {
+    return serverFetch('/api/ai-review/engine-config');
+  },
   clearAsk(opportunityId, tab) {
     return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/ask?tab=' + encodeURIComponent(tab), { method: 'DELETE' });
+  },
+  // Start (or retry) the whole review in the background. { only_stale: true } skips tabs that are current.
+  runAll(opportunityId, onlyStale = false) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/run-all', {
+      method: 'POST', body: JSON.stringify({ only_stale: onlyStale }),
+    });
+  },
+  // A reviewer accepts, overrides (with a reason) or asks the Preparer to clarify one AI finding.
+  decide(opportunityId, tab, body) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/tabs/' + encodeURIComponent(tab) + '/review', {
+      method: 'POST', body: JSON.stringify(body),
+    });
+  },
+  reviewHistory(opportunityId, tab) {
+    return serverFetch('/api/ai-review/opportunities/' + encodeURIComponent(opportunityId) + '/review-history' + (tab ? '?tab=' + encodeURIComponent(tab) : ''));
   },
 };
 

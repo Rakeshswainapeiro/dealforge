@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AIBadge } from "./AIValidationCard";
+import RailSection, { StaleChip } from "@/components/review/RailSection";
 
 // AI analysis ("AI research") for one capture tab. It reads only that tab, its
 // documents and the Sirius strategy library; sources shown are the ones the
@@ -70,32 +70,37 @@ function Item({ item, index }) {
   );
 }
 
-export default function AIAnalysisCard({ tabLabel, hasRecord, result, loading, running, onRun, runError }) {
+export default function AIAnalysisCard({ tabLabel, hasRecord, result, loading, running, onRun, runError, open = false, onToggle = () => {} }) {
   const a = result?.analysis;
+  const n = a?.items?.length || 0;
+  const summary = a ? `${a.recommendation.rating} · ${n} finding${n === 1 ? "" : "s"}` : (running ? "Researching..." : "Not run yet");
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm" data-testid="ai-analysis-card" aria-label={`AI analysis, ${tabLabel}`}>
-      <header className="flex items-center gap-3 px-5 pb-2 pt-4">
-        <AIBadge />
-        <h3 className="flex-1 text-[15px] font-semibold text-slate-900">AI analysis</h3>
-        {hasRecord && (
-          <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2.5 text-xs" disabled={running} onClick={onRun} data-testid="ai-analysis-run">
-            {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            {result ? "Re-run" : "Research this tab"}
-          </Button>
-        )}
-      </header>
-
+    <RailSection
+      title="AI analysis"
+      badge
+      testid="ai-analysis-card"
+      open={open}
+      onToggle={onToggle}
+      summary={summary}
+      chips={result?.stale ? <StaleChip label="Out of date" /> : null}
+      action={hasRecord ? (
+        <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2.5 text-xs" disabled={running} onClick={onRun} data-testid="ai-analysis-run">
+          {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+          {result ? "Re-run" : "Research this tab"}
+        </Button>
+      ) : null}
+    >
       {!hasRecord ? (
-        <p className="px-5 pb-5 text-sm text-slate-500">Save the draft to research this tab.</p>
+        <p className="text-sm text-slate-500">Save the draft to research this tab.</p>
       ) : loading && !result ? (
-        <p className="flex items-center gap-2 px-5 pb-5 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</p>
+        <p className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</p>
       ) : !a ? (
-        <p className="px-5 pb-5 text-sm text-slate-500">
+        <p className="text-sm text-slate-500">
           {running ? "Researching this tab..."
             : NOTES[result?.ai_status] || `Not run yet. Research reads only the ${tabLabel.toLowerCase()} tab, its documents and the Sirius strategy library.`}
         </p>
       ) : (
-        <div className={cn("space-y-3 px-5 pb-4", (result.stale || running) && "opacity-60")}>
+        <div className={cn("space-y-3", (result.stale || running) && "opacity-60")}>
           {runError && !running && (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800" data-testid="ai-analysis-run-error">
               The latest re-run failed ({NOTES[runError] || "the AI could not run"}) so the earlier result is kept.
@@ -145,6 +150,6 @@ export default function AIAnalysisCard({ tabLabel, hasRecord, result, loading, r
           <p className="pt-1 text-[11px] leading-snug text-slate-400" data-testid="ai-analysis-disclaimer">{result.disclaimer} {result.advisory}</p>
         </div>
       )}
-    </section>
+    </RailSection>
   );
 }

@@ -117,6 +117,11 @@ export function onSubmit({ inTransaction = null, afterCommit = null } = {}) {
   if (afterCommit) submitHooks.afterCommit.push(afterCommit);
 }
 
+// Hooks run after any committed state change (e.g. re-running the AI review on
+// the tabs a Preparer changed when they answer an information request).
+export const transitionHooks = [];
+export function onTransition(fn) { transitionHooks.push(fn); }
+
 export async function runAfterSubmit(args) {
   for (const hook of submitHooks.afterCommit) {
     await Promise.resolve().then(() => hook(args)).catch((err) => console.warn('[submit] hook failed:', err.message));
@@ -301,6 +306,10 @@ export async function transitionOpportunity(opportunityId, toState, {
 
   for (const fn of after) await Promise.resolve().then(fn).catch((err) => console.warn('[lifecycle] notify failed:', err.message));
   await notifyDecision(result, actor).catch((err) => console.warn('[lifecycle] notify failed:', err.message));
+  for (const hook of transitionHooks) {
+    await Promise.resolve().then(() => hook({ row: result.row, rule: result.rule, from: result.from, to: toState, actor }))
+      .catch((err) => console.warn('[lifecycle] transition hook failed:', err.message));
+  }
 
   return {
     ok: true,

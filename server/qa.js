@@ -4,8 +4,9 @@ import multer from 'multer';
 import { pool } from './db.js';
 import { writeAudit, listAuditEvents } from './audit.js';
 import { resolveActor } from './users.js';
-import { canViewOrg } from './rbac.js';
-import { isProducerFor, isReviewer } from './config/workflowStates.js';
+import { canViewOrg, CROSS_ORG_READ_ROLES } from './rbac.js';
+import { AI_TAB_KEYS } from './config/aiReview.js';
+import { isProducerFor, isReviewer, REVIEWER_ROLES } from './config/workflowStates.js';
 import { addDocumentVersion } from './gate.js';
 import { UPLOAD_MAX_BYTES, uploadFilter } from './security.js';
 import { notify } from './notify.js';
@@ -35,6 +36,36 @@ import {
 
 const OPPORTUNITY_ENTITY = 'DealOpportunity';
 const uuid = () => crypto.randomUUID();
+
+// An internal note belongs to the Sirius team. The visibility policy hides
+// internal comments from subsidiary roles; on top of that the server only lets an
+// authorised Sirius user write or read one: the investment team, a cross-org
+// reader (leadership, IC, compliance, admin) or the independent reviewer. A role
+// the policy does not name can therefore never see an internal note by accident.
+const SIRIUS_INTERNAL_ROLES = new Set([...REVIEWER_ROLES, ...CROSS_ORG_READ_ROLES, 'independent_reviewer']);
+function maySendInternal(actor) {
+  return (actor?.roles || []).some((r) => SIRIUS_INTERNAL_ROLES.has(r));
+}
+
+// The one visibility gate used by every read, notification and write in this
+// module: the policy check plus the Sirius-role requirement for anything that is
+// not plainly shared. (When an operator has switched the restriction off in the
+// policy, the policy alone decides.)
+function mayViewVis(config, actor, visibility) {
+  if (!mayViewVisibility(config, actor, visibility)) return false;
+  if (config?.restrict_internal_to_group === false) return true;
+  return String(visibility || '').trim().toLowerCase() === 'shared' ? true : maySendInternal(actor);
+}
+
+// A question may be scoped to one capture section; anything else is refused.
+function resolveSection(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const key = String(value).trim();
+  if (!AI_TAB_KEYS.includes(key)) {
+    const e = new Error('Unknown section: ' + key); e.status = 400; throw e;
+  }
+  return key;
+}
 
 export async function loadOpportunity(id, actor) {
   const { rows } = await pool.query(
@@ -89,14 +120,14 @@ function resolveVisibility(value, fallback) {
 // May this actor see the thread at all? An internal thread is withheld from a
 // subsidiary-only viewer, who must not even know it exists.
 function maySeeThread(config, actor, thread) {
-  return mayViewVisibility(config, actor, thread.visibility || 'shared');
+  return mayViewVis(config, actor, thread.visibility || 'shared');
 }
 
 // Filter a message list for the viewer: drop anything whose effective
 // visibility (thread + message) the actor may not see.
 function filterMessages(config, actor, thread, messages) {
   return (messages || []).filter((m) =>
-    mayViewVisibility(config, actor, effectiveMessageVisibility(thread.visibility, m.visibility)));
+    mayViewVis(config, actor, effectiveMessageVisibility(thread.visibility, m.visibility)));
 }
 
 // Given a set of recipient emails, drop anyone who may not see an internal
@@ -118,7 +149,7 @@ async function recipientsWhoMaySee(config, emails, visibility) {
   }
   return list.filter((email) => {
     const roles = rolesByEmail.get(String(email).toLowerCase()) || [];
-    return mayViewVisibility(config, { roles }, visibility);
+    return mayViewVis(config, { roles }, visibility);
   });
 }
 
@@ -155,14 +186,14 @@ async function resolveParticipants(candidates = [], { actor, ownerOrgId } = {}) 
 // same transaction and notify only after it commits.
 export async function insertThread(db, opp, {
   subject, body, requiresResponse = false, visibility = 'shared', participants = [],
-  kind = 'question', dueAt = null, ownerEmail = null,
+  kind = 'question', dueAt = null, ownerEmail = null, section = null,
 }, actor) {
   const id = uuid();
   const { rows } = await db.query(
-    "INSERT INTO qa_thread (id, opportunity_id, owner_org_id, subject, status, requires_response, raised_by, raised_by_name, visibility, kind, due_at, owner_email) " +
-      "VALUES ($1,$2,$3,$4,'open',$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+    "INSERT INTO qa_thread (id, opportunity_id, owner_org_id, subject, status, requires_response, raised_by, raised_by_name, visibility, kind, due_at, owner_email, section) " +
+      "VALUES ($1,$2,$3,$4,'open',$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",
     [id, opp.id, opp.owner_org_id, subject, requiresResponse, actor.email, actor.full_name || null, visibility,
-      kind, dueAt, ownerEmail]
+      kind, dueAt, ownerEmail, section]
   );
   await db.query(
     "INSERT INTO qa_message (id, thread_id, author_email, author_name, author_id, body, is_response, visibility) " +
@@ -215,9 +246,10 @@ export async function openThread(opportunityId, payload = {}, { actor } = {}) {
   const visibility = resolveVisibility(payload.visibility, config.default_thread_visibility);
   // A subsidiary-only author cannot create an internal thread (they could never
   // see it, and internal notes belong to the group layer).
-  if (visibility === 'internal' && isSubsidiaryViewer(config, actor)) {
+  if (visibility === 'internal' && (isSubsidiaryViewer(config, actor) || !maySendInternal(actor))) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
+  const section = resolveSection(payload.section);
   const dueAt = parseDueDate(payload.due_at ?? payload.due_date);
   // WF-04: every question has an owner who must answer it. A Sirius question
   // defaults to the subsidiary preparer, who is also added as a participant.
@@ -228,9 +260,9 @@ export async function openThread(opportunityId, payload = {}, { actor } = {}) {
   if (!participants.length && preparer && visibility !== 'internal' && !isProducerFor(actor, opp.owner_org_id)) participants.push(preparer);
   const { thread, people } = await insertThread(pool, opp, {
     subject, body, requiresResponse, visibility, participants,
-    kind: 'question', dueAt, ownerEmail,
+    kind: 'question', dueAt, ownerEmail, section,
   }, actor);
-  await writeAudit({ entity: 'qa_thread', entityId: thread.id, action: 'thread_open', actor, orgId: opp.owner_org_id, after: { subject, requires_response: requiresResponse, visibility, due_at: dueAt } });
+  await writeAudit({ entity: 'qa_thread', entityId: thread.id, action: 'thread_open', actor, orgId: opp.owner_org_id, after: { subject, requires_response: requiresResponse, visibility, due_at: dueAt, section } });
   await writeAudit({ entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'qa_thread_open', actor, orgId: opp.owner_org_id, after: { thread_id: thread.id, subject, visibility } });
   await notifyThreadOpened({ thread, people, opp, actor });
   return toThread(thread);
@@ -264,7 +296,7 @@ export async function addMessage(threadId, payload = {}, { actor, documentId = n
   // mark an individual message internal. A subsidiary-only author cannot.
   const requested = resolveVisibility(payload.visibility, config.default_message_visibility);
   const visibility = effectiveMessageVisibility(thread.visibility, requested);
-  if (visibility === 'internal' && isSubsidiaryViewer(config, actor)) {
+  if (visibility === 'internal' && (isSubsidiaryViewer(config, actor) || !maySendInternal(actor))) {
     const e = new Error(COMMENT_VISIBILITY_MESSAGES.internal_hidden); e.status = 403; throw e;
   }
   const { rows: messageRows } = await pool.query(
@@ -337,11 +369,12 @@ export async function setThreadStatus(threadId, status, { actor, comment } = {})
   return toThread(updated[0]);
 }
 
-export async function listThreads(opportunityId, { status, awaitingResponse, actor } = {}) {
+export async function listThreads(opportunityId, { status, awaitingResponse, section, actor } = {}) {
   const params = [opportunityId];
   const where = ['t.opportunity_id = $1'];
   if (status) { params.push(status); where.push('t.status = $' + params.length); }
   if (awaitingResponse) where.push('t.requires_response = true AND t.response_received = false');
+  if (section) { params.push(String(section)); where.push('t.section = $' + params.length); }
   const { rows } = await pool.query(
     'SELECT t.*, (SELECT count(*)::int FROM qa_message m WHERE m.thread_id = t.id) AS message_count, ' +
       '(SELECT count(*)::int FROM qa_participant p WHERE p.thread_id = t.id) AS participant_count, ' +
@@ -462,6 +495,7 @@ qaRouter.get('/opportunities/:id/threads', async (req, res) => {
       threads: await listThreads(req.params.id, {
         status: req.query.status,
         awaitingResponse: req.query.awaiting_response === '1',
+        section: req.query.section || undefined,
         actor: req.actor,
       }),
     });
