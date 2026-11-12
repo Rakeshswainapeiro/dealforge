@@ -51,6 +51,26 @@ export const AI_DEFAULT_PROVIDERS = [
     approved_on: '2026-09-01',
     notes: 'No data leaves the platform boundary; approved by default.',
   },
+  // Web search providers (external research). A search query leaves the platform
+  // boundary, so each needs the same written approval as a model provider.
+  {
+    id: 'tavily',
+    label: 'Tavily web search',
+    approval_status: 'pending',
+    data_residency: 'US (search queries only: public company, sector and geography names)',
+    approved_by: null,
+    approved_on: null,
+    notes: 'Used for external research. Only public identifiers are sent; approve before enabling.',
+  },
+  {
+    id: 'brave_search',
+    label: 'Brave Search API',
+    approval_status: 'pending',
+    data_residency: 'US (search queries only: public company, sector and geography names)',
+    approved_by: null,
+    approved_on: null,
+    notes: 'Used for external research. Only public identifiers are sent; approve before enabling.',
+  },
   {
     id: 'custom',
     label: 'Custom OpenAI-compatible endpoint',
@@ -118,6 +138,8 @@ export function resolveAIGovernanceConfig(stored) {
         notes: p.notes || '',
       }))
     : base.providers;
+  // A register saved before a provider existed still lists it (as pending).
+  for (const d of base.providers) if (!providers.some((p) => p.id === d.id)) providers.push({ ...d });
   return {
     ...base,
     ...value,
@@ -222,6 +244,10 @@ export function scrubSecrets(text, knownKeys = []) {
 export function providerIdForBase(baseUrl) {
   const base = String(baseUrl || '').toLowerCase();
   if (!base) return 'custom';
+  // Search providers are matched on the exact host, never a substring.
+  const host = (() => { try { return new URL(base).hostname; } catch { return ''; } })();
+  if (host === 'api.tavily.com') return 'tavily';
+  if (host === 'api.search.brave.com') return 'brave_search';
   if (base.includes('openai.azure.com') || base.includes('azure')) return 'azure_openai';
   if (base.includes('api.openai.com') || base.includes('openai.com')) return 'openai';
   if (base.includes('localhost') || base.includes('127.0.0.1') || base.includes('localai') || base.includes('ollama') || base.includes('lmstudio')) return 'localai';

@@ -162,6 +162,8 @@ export function buildCommentVisibilityConfig(body = {}, { actor = null, base = d
   return next;
 }
 
+const SIRIUS_REVIEWER_ORG_ID = 'org-sirius-international-holding-limited';
+
 // Is this actor a subsidiary-only user for the purpose of comment visibility?
 // True when they hold at least one restricted role and no cross-org read role.
 // A user with no restricted role at all (a pure group user) is not restricted.
@@ -172,7 +174,13 @@ export function isSubsidiaryViewer(config, actor = {}) {
   const hasSubsidiaryRole = cfg.subsidiary_roles.some((r) => roles.has(r));
   if (!hasSubsidiaryRole) return false;
   const isCrossOrg = COMMENT_VISIBILITY_CROSS_ORG_ROLES.some((r) => roles.has(r));
-  return !isCrossOrg;
+  if (isCrossOrg) return false;
+  // A Cluster Head who sits in the Sirius organisation is Sirius staff and an
+  // authorised reviewer, so is not held to the subsidiary restriction. The same
+  // role inside a subsidiary organisation stays restricted.
+  const orgId = actor.org_id || actor.membership?.org_id || null;
+  if (orgId === SIRIUS_REVIEWER_ORG_ID && roles.has('cluster_head')) return false;
+  return true;
 }
 
 // The single visibility gate. An 'internal' comment is visible to this actor

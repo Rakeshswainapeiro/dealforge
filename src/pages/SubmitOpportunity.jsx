@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { isReviewerWorkspaceUser, isSubmittedStatus } from "@/lib/reviewerWorkspace";
 import { api } from "@/api/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -13,9 +14,6 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import AIValidationCard from "@/components/ai/AIValidationCard";
-import AIAnalysisCard from "@/components/ai/AIAnalysisCard";
-import AIQACard from "@/components/ai/AIQACard";
 import {
   Dialog,
   DialogContent,
@@ -1433,38 +1431,6 @@ export default function SubmitOpportunity({ isNewRoute = false }) {
     },
   });
 
-  // AI validation (advisory). One run per tab; "Save and Continue" runs it
-  // automatically, everything else is the Re-run button. Never blocks anything.
-  const aiResultsQuery = useQuery({
-    queryKey: ["ai-review", selectedId],
-    queryFn: () => api.aiReview.results(selectedId),
-    enabled: Boolean(selectedId),
-  });
-  const aiAnalyseMutation = useMutation({
-    mutationFn: ({ id, tab }) => api.aiReview.analyse(id, tab),
-    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
-    onError: (error) => toast({ variant: "destructive", title: "AI research did not run", description: error?.message }),
-  });
-  const aiAskMutation = useMutation({
-    mutationFn: ({ id, tab, question }) => api.aiReview.ask(id, tab, question),
-    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
-  });
-  const aiClearMutation = useMutation({
-    mutationFn: ({ id, tab }) => api.aiReview.clearAsk(id, tab),
-    onSettled: (_d, _e, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
-  });
-  // Turns a question into a normal Q&A thread with the Sirius team.
-  const sendToSirius = (question, tabLabel) => {
-    api.qa.open(selectedId, { subject: `${tabLabel}: ${question}`.slice(0, 120), body: question, requires_response: true })
-      .then(() => toast({ title: "Question sent to Sirius", description: "It is now a Q&A thread on this opportunity." }))
-      .catch((error) => toast({ variant: "destructive", title: "Question not sent", description: error?.message }));
-  };
-  const aiValidateMutation = useMutation({
-    mutationFn: ({ id, tab, trigger }) => api.aiReview.validate(id, tab, trigger),
-    onSettled: (_data, _error, vars) => queryClient.invalidateQueries({ queryKey: ["ai-review", vars.id] }),
-    onError: (error) => toast({ variant: "destructive", title: "AI validation did not run", description: error?.message }),
-  });
-
   const uploadMutation = useMutation({
     mutationFn: ({ requirementKey, file }) => api.gate.uploadDocument(selectedId, requirementKey, file),
     onSuccess: (doc) => {
@@ -1756,6 +1722,13 @@ export default function SubmitOpportunity({ isNewRoute = false }) {
       window.scrollTo(0, 0);
     }
     openingIdRef.current = opportunity.id;
+
+    // A Sirius reviewer opening a submitted opportunity gets the read-only
+    // Reviewer Workspace, never the Preparer's editable form.
+    if (isReviewerWorkspaceUser(currentUser) && isSubmittedStatus(opportunity.status)) {
+      navigate(createPageUrl("Opportunity") + "?id=" + encodeURIComponent(opportunity.id));
+      return;
+    }
     setSelectedId(opportunity.id);
     setForm({
       ...toForm(opportunity, allFields),
@@ -1846,11 +1819,9 @@ export default function SubmitOpportunity({ isNewRoute = false }) {
       goToTab(activeTab + 1);
       return;
     }
-    const tabKey = CAPTURE_TABS[activeTab].key;
     saveDraft({
-      onSuccess: (record) => {
+      onSuccess: () => {
         goToTab(activeTab + 1);
-        if (record?.id) aiValidateMutation.mutate({ id: record.id, tab: tabKey, trigger: "auto_save" });
       },
     });
   };
@@ -5611,35 +5582,6 @@ export default function SubmitOpportunity({ isNewRoute = false }) {
                 <p className="text-xs text-slate-500">Save the draft to track progress by section.</p>
               )}
             </aside>
-            <AIValidationCard
-              tabLabel={CAPTURE_TABS[activeTab].label}
-              hasRecord={Boolean(selectedId)}
-              result={aiResultsQuery.data?.results?.[CAPTURE_TABS[activeTab].key]?.validation || null}
-              loading={aiResultsQuery.isLoading}
-              running={aiValidateMutation.isPending && aiValidateMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
-              onRun={() => aiValidateMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key, trigger: "manual" })}
-            />
-            <AIAnalysisCard
-              tabLabel={CAPTURE_TABS[activeTab].label}
-              hasRecord={Boolean(selectedId)}
-              result={aiResultsQuery.data?.results?.[CAPTURE_TABS[activeTab].key]?.analysis || null}
-              loading={aiResultsQuery.isLoading}
-              running={aiAnalyseMutation.isPending && aiAnalyseMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
-              runError={aiAnalyseMutation.data?.run_error && aiAnalyseMutation.variables?.tab === CAPTURE_TABS[activeTab].key ? aiAnalyseMutation.data.run_error : null}
-              onRun={() => aiAnalyseMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key })}
-            />
-            <AIQACard
-              tabLabel={CAPTURE_TABS[activeTab].label}
-              hasRecord={Boolean(selectedId)}
-              qa={aiResultsQuery.data?.qa?.[CAPTURE_TABS[activeTab].key] || null}
-              suggestions={aiResultsQuery.data?.suggestions?.[CAPTURE_TABS[activeTab].key] || []}
-              loading={aiResultsQuery.isLoading}
-              asking={aiAskMutation.isPending && aiAskMutation.variables?.tab === CAPTURE_TABS[activeTab].key}
-              error={aiAskMutation.isError && aiAskMutation.variables?.tab === CAPTURE_TABS[activeTab].key ? aiAskMutation.error?.message : null}
-              onAsk={(question) => aiAskMutation.mutateAsync({ id: selectedId, tab: CAPTURE_TABS[activeTab].key, question })}
-              onClear={() => aiClearMutation.mutate({ id: selectedId, tab: CAPTURE_TABS[activeTab].key })}
-              onSendToSirius={(question) => sendToSirius(question, CAPTURE_TABS[activeTab].label)}
-            />
             </div>
           </div>
         </div>

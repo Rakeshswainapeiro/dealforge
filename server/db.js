@@ -467,6 +467,10 @@ CREATE INDEX IF NOT EXISTS qa_participant_thread_idx ON qa_participant(thread_id
 ALTER TABLE qa_thread ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared';
 ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared';
 ALTER TABLE qa_message ADD COLUMN IF NOT EXISTS document_id TEXT;
+-- Reviewer workspace: a question can be scoped to the form section it is about
+-- (a key of the capture tabs, e.g. 'financials'). Null for a thread on the whole
+-- opportunity, so existing threads are unchanged.
+ALTER TABLE qa_thread ADD COLUMN IF NOT EXISTS section TEXT;
 
 -- External evidence with provenance (BRD v2 INTG-07, INTG-12): every value
 -- from a connected tool or desk research, with its source, time, method and

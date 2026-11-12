@@ -39,3 +39,11 @@ research/
 *.sw?
 
 .env
+
+# Local backups and one-off working analysis (never committed)
+.backup_token_manager/
+*.bak
+/AI_Architecture_Investigation.md
+/AI_Workflow_Gap_Analysis.xlsx
+/Phase_1_Codebase_Gap_Analysis.md
+/Phase_1_Codebase_Gap_Analysis.xlsx

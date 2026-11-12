@@ -1,4 +1,5 @@
 import express from 'express';
+import { canSeeInternalAssessment } from './config/aiVisibility.js';
 import { pool } from './db.js';
 import { writeAudit } from './audit.js';
 import { resolveActor } from './users.js';
@@ -54,7 +55,8 @@ async function loadMemoInputs(req) {
   const [org, documents, alignment] = await Promise.all([
     getOrganization(row.owner_org_id).catch(() => null),
     listDocuments(row.id, { currentOnly: true }).catch(() => []),
-    evaluateAlignment(row, { orgId: row.owner_org_id }).catch(() => null),
+    // Strategic alignment is Sirius's assessment; a Preparer's pack carries the submission only.
+    canSeeInternalAssessment(req.actor) ? evaluateAlignment(row, { orgId: row.owner_org_id }).catch(() => null) : Promise.resolve(null),
   ]);
   const memo = buildSiriusMemo({ opportunity: row, org, documents, alignment });
   return { row, org, memo };

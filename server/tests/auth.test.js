@@ -254,14 +254,16 @@ describe('Auth policy (PLT-04)', () => {
       assert.equal(list.status, 200);
       assert.ok(list.data.some((p) => p.provider_id === providerId));
 
-      // Sign-in with SSO resolves the provider from the email domain and
-      // returns the IdP authorization URL.
+      // A provider added at runtime must prove ownership of its domain (DNS)
+      // before anyone can sign in through it (sso domainVerification, auth.js).
+      // Until then, SSO sign-in for that domain is refused and no IdP URL is issued.
       const sso = await req('/api/auth/sign-in/sso', {
         method: 'POST',
         body: { email: 'user@' + providerId + '.example.com', callbackURL: '/' },
       });
-      assert.equal(sso.status, 200, JSON.stringify(sso.data));
-      assert.ok(String(sso.data.url || '').startsWith('https://idp.' + providerId + '.example.com/authorize'));
+      assert.equal(sso.status, 401, JSON.stringify(sso.data));
+      assert.match(String(sso.data?.message || ''), /domain has not been verified/i);
+      assert.equal(sso.data?.url, undefined, 'no authorization URL for an unverified provider');
     } finally {
       const removed = await req('/api/auth-policy/providers/' + providerId, { method: 'DELETE', user: 'user-admin' });
       assert.equal(removed.status, 200);

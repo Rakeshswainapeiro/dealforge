@@ -231,7 +231,10 @@ export function evaluateHardFilters(data = {}, { theme = null, thresholds = null
     verticalItem(spec('designated_vertical'), data, theme),
     sizeItem(spec('check_size'), data, theme, thresholds),
     manualItem(spec('sanctions_export'), data, {
-      passValues: ['clear', 'no', 'none', 'yes', 'true', 'clean'],
+      // 'yes' / 'true' are deliberately not here: the question is "is there an exposure?", so
+      // 'yes' reads as an exposure in the disqualifier but as a clear here. Ambiguous values
+      // fall through to the "not recognised" flag for a person to settle.
+      passValues: ['clear', 'no', 'none', 'clean'],
       failValues: ['exposure', 'flag', 'flagged', 'yes_exposure', 'adverse'],
       passRationale: 'No sanctions, export-control or reputational exposure confirmed.',
       failRationale: 'Sanctions, export-control or reputational exposure confirmed; the filter fails.',

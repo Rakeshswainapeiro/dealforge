@@ -10,19 +10,28 @@
 // and Q&A rely on). The key is never printed; provider errors are scrubbed.
 // ---------------------------------------------------------------------------
 import { scrubSecrets } from '../server/config/aiGovernance.js';
+import { resolveAuthToken, getKnownTokens } from '../server/tokenManager.js';
 
 const base = (process.env.OPENAI_BASE_URL || '').replace(/\/+$/, '');
 const key = process.env.OPENAI_API_KEY || '';
 const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-const safe = (t) => scrubSecrets(t, [key]);
-const headers = { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) };
+
+let activeKey = key;
+try {
+  activeKey = await resolveAuthToken(base, key);
+} catch {
+  // Graceful fallback to static key
+}
+
+const safe = (t) => scrubSecrets(t, [key, activeKey, ...getKnownTokens()]);
+const headers = { 'Content-Type': 'application/json', ...(activeKey ? { Authorization: `Bearer ${activeKey}` } : {}) };
 let failed = false;
 const report = (ok, label, detail = '') => { if (!ok) failed = true; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? ' - ' + safe(detail) : ''}`); };
 
-console.log(`Endpoint: ${base || '(not set)'}   Model: ${model}   Key: ${key ? 'set (hidden)' : 'NOT SET'}`);
+console.log(`Endpoint: ${base || '(not set)'}   Model: ${model}   Key: ${activeKey ? 'set (hidden)' : 'NOT SET'}`);
 report(Boolean(base), 'OPENAI_BASE_URL is set');
-report(Boolean(key) || !/api\.openai\.com/.test(base), 'OPENAI_API_KEY is set');
-if (!base || (!key && /api\.openai\.com/.test(base))) process.exit(1);
+report(Boolean(activeKey) || !/api\.openai\.com/.test(base), 'OPENAI_API_KEY / Token is resolved');
+if (!base || (!activeKey && /api\.openai\.com/.test(base))) process.exit(1);
 
 try {
   const res = await fetch(`${base}/models`, { headers });

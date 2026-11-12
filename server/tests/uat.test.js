@@ -184,7 +184,7 @@ describe('UAT golden path (J1-J5)', () => {
         decision_sought: 'Approve diligence on the hotel portfolio.',
         business_plan: 'Hotel portfolio plan attached.',
       });
-      const align = await api('/api/pipeline/opportunities/' + opp.id + '/alignment', { user: 'user-deal-lead' });
+      const align = await api('/api/pipeline/opportunities/' + opp.id + '/alignment', { user: 'user-cio' });
       assert.equal(align.data.alignment.aligned, false, 'the submission must be flagged as misaligned');
       assert.ok(align.data.alignment.reasons.length > 0);
       const short = await api('/api/themes/exceptions/' + opp.id, {

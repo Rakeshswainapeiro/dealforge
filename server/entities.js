@@ -7,6 +7,9 @@ import { canViewOrg, canWriteOrg, isCrossOrgReader, canConfigure } from './rbac.
 import { evaluateAbac, ABAC_RESOURCES } from './abac.js';
 import { OPPORTUNITY_ENTITY, checkCreate, checkUpdate, checkDelete } from './config/opportunityPolicy.js';
 import { withLockedOpportunity } from './lifecycle.js';
+import { AI_REVIEW_ENTITY } from './config/aiReview.js';
+import { canSeeInternalAssessment, isInternalEntity, projectOpportunityRecord, projectAuditEvents } from './config/aiVisibility.js';
+import { ATLAS_TOKEN_SETTING_KEY } from './tokenManager.js';
 
 function policyError(result) {
   const err = new Error(result.error);
@@ -301,6 +304,18 @@ function guardEntity(req, res, next) {
   // Application configuration (DoA, MFA policy, routing, connectors...) is
   // changed only by an administrator, through its own audited endpoint or here
   // (NFR-02). Without this, any group user could rewrite policy.
+  // Internal AI material is written only by the AI review service, and read
+  // only by the Sirius Investment Team (never by the subsidiary Preparer).
+  // AI review results (validation, analysis and the private Q&A threads) are
+  // reachable only through /api/ai-review, which scopes a thread to the person
+  // who asked and is the only writer. No generic read or write, for any role.
+  if (req.params.entity === AI_REVIEW_ENTITY) {
+    return res.status(403).json({ error: 'AI review results are available only through the AI review service' });
+  }
+  if (isInternalEntity(req.params.entity)) {
+    if (req.method !== 'GET') return res.status(403).json({ error: 'This record type is managed by the AI review service and cannot be changed here' });
+    if (!canSeeInternalAssessment(req.actor)) return res.status(403).json({ error: 'Only the Sirius Investment Team may read internal AI results' });
+  }
   if (req.params.entity === CONFIG_ENTITY && req.method !== 'GET' && !canConfigure(req.actor?.membership)) {
     return res.status(403).json({ error: 'Administrator role required to change application settings' });
   }
@@ -317,6 +332,34 @@ export function redactSecrets(value) {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) && v ? '********' : redactSecrets(v)]));
   }
   return value;
+}
+
+// Settings the server manages for itself and that hold credentials (the
+// encrypted Atlas token state). They are never listed, read, created, changed or
+// deleted through the generic API, for any role, administrators included: the
+// owning module reads and writes them directly.
+export const SYSTEM_MANAGED_SETTING_KEYS = Object.freeze([ATLAS_TOKEN_SETTING_KEY]);
+export const isSystemManagedSetting = (rec) => Boolean(rec) && SYSTEM_MANAGED_SETTING_KEYS.includes(String(rec.setting_key ?? ''));
+
+// Refuses the generic API any touch of a system-managed setting. A record id
+// that names one answers 404, as if it did not exist; a create or an update that
+// would claim a system-managed key answers 403.
+async function guardSystemSettings(req, res, next) {
+  try {
+    if (req.params.entity !== CONFIG_ENTITY) return next();
+    const bodies = Array.isArray(req.body) ? req.body : [req.body || {}];
+    if (req.method !== 'GET' && req.method !== 'DELETE' && bodies.some((b) => b && isSystemManagedSetting(b))) {
+      return res.status(403).json({ error: 'This setting is managed by the server and cannot be written here' });
+    }
+    if (req.params.id) {
+      const { rows } = await pool.query(
+        "SELECT data->>'setting_key' AS setting_key FROM entity_record WHERE entity = $1 AND id = $2",
+        [CONFIG_ENTITY, req.params.id]
+      );
+      if (rows[0] && isSystemManagedSetting(rows[0])) return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+  } catch (err) { next(err); }
 }
 
 function redactSetting(rec, actor) {
@@ -363,11 +406,16 @@ async function enforceAbac(req, resource, context) {
   return res;
 }
 
+// An opportunity record never carries the Sirius reviewers' fields to a Preparer.
+function projectForActor(entity, rec, actor) {
+  return entity === OPPORTUNITY_ENTITY ? projectOpportunityRecord(rec, actor) : rec;
+}
+
 function sendErr(res, err) {
   res.status(err.status || 500).json({ error: err.message, ...(err.data || {}) });
 }
 
-entitiesRouter.get('/:entity', guardEntity, async (req, res) => {
+entitiesRouter.get('/:entity', guardEntity, guardSystemSettings, async (req, res) => {
   try {
     // Coarse resource-level ABAC guard first; then per-record filtering below.
     await enforceAbac(req, abacResource(req.params.entity), { orgId: req.actor?.org_id });
@@ -375,43 +423,44 @@ entitiesRouter.get('/:entity', guardEntity, async (req, res) => {
     const allowed = [];
     for (const rec of records) {
       const evalRes = await evaluateAbac(req.actor, abacResource(req.params.entity), 'read', recordAbacContext(rec));
-      if (evalRes.allowed) allowed.push(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : rec);
+      if (req.params.entity === CONFIG_ENTITY && isSystemManagedSetting(rec)) continue;
+      if (evalRes.allowed) allowed.push(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : projectForActor(req.params.entity, rec, req.actor));
     }
     res.json(allowed);
   } catch (err) { sendErr(res, err); }
 });
 
-entitiesRouter.get('/:entity/:id', guardEntity, async (req, res) => {
+entitiesRouter.get('/:entity/:id', guardEntity, guardSystemSettings, async (req, res) => {
   try {
     const rec = await getRecord(req.params.entity, req.params.id, { actor: req.actor });
     if (!rec) return res.status(404).json({ error: 'Not found' });
     await enforceAbac(req, abacResource(req.params.entity), recordAbacContext(rec));
-    res.json(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : rec);
+    res.json(req.params.entity === CONFIG_ENTITY ? redactSetting(rec, req.actor) : projectForActor(req.params.entity, rec, req.actor));
   } catch (err) { sendErr(res, err); }
 });
 
-entitiesRouter.post('/:entity', guardEntity, async (req, res) => {
+entitiesRouter.post('/:entity', guardEntity, guardSystemSettings, async (req, res) => {
   try {
     if (Array.isArray(req.body)) {
       return res.status(201).json(await bulkCreateRecords(req.params.entity, req.body, { actor: req.actor }));
     }
-    res.status(201).json(await createRecord(req.params.entity, req.body || {}, { actor: req.actor }));
+    res.status(201).json(projectForActor(req.params.entity, await createRecord(req.params.entity, req.body || {}, { actor: req.actor }), req.actor));
   } catch (err) { sendErr(res, err); }
 });
 
-entitiesRouter.put('/:entity/:id', guardEntity, async (req, res) => {
+entitiesRouter.put('/:entity/:id', guardEntity, guardSystemSettings, async (req, res) => {
   try {
-    res.json(await updateRecord(req.params.entity, req.params.id, req.body || {}, { actor: req.actor }));
+    res.json(projectForActor(req.params.entity, await updateRecord(req.params.entity, req.params.id, req.body || {}, { actor: req.actor }), req.actor));
   } catch (err) { sendErr(res, err); }
 });
 
-entitiesRouter.patch('/:entity/:id', guardEntity, async (req, res) => {
+entitiesRouter.patch('/:entity/:id', guardEntity, guardSystemSettings, async (req, res) => {
   try {
-    res.json(await updateRecord(req.params.entity, req.params.id, req.body || {}, { actor: req.actor }));
+    res.json(projectForActor(req.params.entity, await updateRecord(req.params.entity, req.params.id, req.body || {}, { actor: req.actor }), req.actor));
   } catch (err) { sendErr(res, err); }
 });
 
-entitiesRouter.delete('/:entity/:id', guardEntity, async (req, res) => {
+entitiesRouter.delete('/:entity/:id', guardEntity, guardSystemSettings, async (req, res) => {
   try {
     res.json(await deleteRecord(req.params.entity, req.params.id, { actor: req.actor }));
   } catch (err) { sendErr(res, err); }
@@ -438,7 +487,8 @@ auditRouter.get('/', async (req, res) => {
     });
     // Internal (group-only) comments are not visible to a subsidiary, and
     // neither is the audit trail of them (AUD-03).
-    res.json(crossOrg ? rows : rows.filter((e) => e.after?.visibility !== 'internal' && e.before?.visibility !== 'internal'));
+    const visible = crossOrg ? rows : rows.filter((e) => e.after?.visibility !== 'internal' && e.before?.visibility !== 'internal');
+    res.json(projectAuditEvents(visible, req.actor));
   } catch (err) { sendErr(res, err); }
 });
 

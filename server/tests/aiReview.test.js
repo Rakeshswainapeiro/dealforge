@@ -113,7 +113,8 @@ describe('ai review - rule-based checks', () => {
     const out = runDeterministicChecks('opportunity_overview', { data: {}, gate: { mandate_fit: { sector_in_mandate: true, geography_in_core: false, size_in_ticket: true } } });
     assert.equal(byKey(out, 'mandate_rules').status, 'review');
     const risks = runDeterministicChecks('risks', { data: {}, gate: { hard_filters: { failed: [{ key: 'sanctions', label: 'Sanctions' }], items: [] }, disqualifiers: { items: [{ status: 'flagged', label: 'PEP' }] } } });
-    assert.equal(byKey(risks, 'hard_filters').status, 'review');
+    // A failed hard filter is a fail (the recommendation treats it as a stop), the same as a raised disqualifier.
+    assert.equal(byKey(risks, 'hard_filters').status, 'fail');
     assert.equal(byKey(risks, 'disqualifiers').status, 'fail');
   });
 
@@ -163,7 +164,8 @@ describe('ai review - prompt building', () => {
 
   test('model checks asked per tab', () => {
     assert.deepEqual(aiCheckSpecs('executive_summary').map((s) => s.key), ['intent_fit', 'consistency']);
-    assert.deepEqual(aiCheckSpecs('financials').map((s) => s.key), ['right_document', 'consistency']);
+    // Financials also carries the rubric's assumptions check while its rubric is on (the default).
+    assert.deepEqual(aiCheckSpecs('financials').map((s) => s.key), ['right_document', 'consistency', 'assumptions_reasonable']);
     assert.deepEqual(aiCheckSpecs('nope'), []);
     assert.equal(buildValidationPrompt({ tabKey: 'nope' }), null);
   });
@@ -185,7 +187,7 @@ describe('ai review - normalising the model answer', () => {
   test('a skipped check is "review" - the model cannot pass by omission', () => {
     const out = normaliseValidation({ checks: [] }, 'executive_summary');
     assert.ok(out.every((c) => c.status === 'review'));
-    assert.deepEqual(normaliseValidation(null, 'financials').map((c) => c.status), ['review', 'review']);
+    assert.deepEqual(normaliseValidation(null, 'financials').map((c) => c.status), ['review', 'review', 'review']);
   });
 
   test('detail is trimmed to a safe length', () => {
@@ -416,4 +418,13 @@ test('right-document check is never a pass when no documents are attached', () =
   assert.equal(none.status, 'review');
   const some = normaliseValidation(raw, 'financials', [{ slot: 'financials' }]).find((c) => c.key === 'right_document');
   assert.equal(some.status, 'pass');
+});
+
+test('a missing risk register is reported as missing, not as the check name', async () => {
+  const { runDeterministicChecks } = await import('../config/aiReview.js');
+  const gate = { sufficiency: { open_flags: [{ key: 'risk_register', label: 'Risk register attached', message: 'No risk register was attached; add one.' }] } };
+  const c = runDeterministicChecks('financials', { data: {}, gate }).find((x) => x.key === 'sufficiency');
+  assert.ok(c, 'sufficiency check present');
+  assert.match(c.detail, /No risk register was attached/);
+  assert.doesNotMatch(c.detail, /^Risk register attached/);
 });

@@ -516,6 +516,13 @@ export function capturedNote(data = {}, key) {
   return blank(raw) ? null : String(raw);
 }
 
+// Read the recorded adjustment comment for a criterion (the written reason a
+// reviewer gave for moving away from the proposal), or null.
+export function capturedComment(data = {}, key) {
+  const raw = captured(data)?.comments?.[key];
+  return blank(raw) ? null : String(raw);
+}
+
 // Group the scored criteria into the two lenses and compute each weighted
 // sub-total on the same 1-5 scale. A lens is complete only when every one of
 // its criteria is scored; its sub-total is the weight-normalised weighted
@@ -586,6 +593,7 @@ export function evaluateScorecard(data = {}, { criteria = SCORECARD_ITEMS, lense
       scored: hasReview,
       weighted,
       note,
+      comment: capturedComment(data, c.key),
       field: SCORECARD_FIELDS['score_' + c.key],
       note_field: SCORECARD_FIELDS['note_' + c.key],
     };
@@ -737,7 +745,7 @@ export default {
   SCORECARD_ADJUST_REASON_MIN, SCORECARD_NEUTRAL_SCORE,
   SCORECARD_TAG, SCORECARD_OVERRIDE_TAG, SCORECARD_OUTCOMES, SCORECARD_ITEMS,
   SCORECARD_KEYS, SCORECARD_FIELDS, SCORECARD_MESSAGES,
-  validateWeights, capturedScore, capturedNote, proposeScorecardItem, evaluateLenses, evaluateScorecard, buildScorecard, buildScorecardOverride,
+  validateWeights, capturedScore, capturedNote, capturedComment, proposeScorecardItem, evaluateLenses, evaluateScorecard, buildScorecard, buildScorecardOverride,
   SCORECARD_CONFIG_KEY, SCORECARD_CONFIG_DEFAULT_REVISION, SCORECARD_VERSION_PREFIX,
   defaultScorecardConfig, validateScorecardConfig, resolveScorecardConfig, diffScorecardConfig, buildScorecardConfig,
 };

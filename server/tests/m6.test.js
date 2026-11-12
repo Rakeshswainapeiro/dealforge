@@ -120,7 +120,7 @@ describe('content sufficiency check (W5-03 / DOC-04)', () => {
       method: 'POST', user: 'user-deal-lead', body: { status: 'draft', opportunity_name: 'W5-03 sufficiency probe' },
     });
     const id = draft.data.id;
-    const gate = await api('/api/gate/opportunities/' + id + '/status', { user: 'user-deal-lead' });
+    const gate = await api('/api/gate/opportunities/' + id + '/status', { user: 'user-cio' });
     assert.equal(gate.status, 200);
     const suff = gate.data.gate.sufficiency;
     assert.ok(suff, 'the gate carries the sufficiency result');
