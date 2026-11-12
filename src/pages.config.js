@@ -14,6 +14,7 @@ import Dashboard from './pages/Dashboard';
 import DueDiligence from './pages/DueDiligence';
 import GroupStructure from './pages/GroupStructure';
 import SubmitOpportunity from './pages/SubmitOpportunity';
+import NewOpportunity from './pages/NewOpportunity';
 import ScreeningBoard from './pages/ScreeningBoard';
 import ThemeAdmin from './pages/ThemeAdmin';
 import Settings from './pages/Settings';
@@ -34,6 +35,7 @@ export const PAGES = {
     "DueDiligence": DueDiligence,
     "GroupStructure": GroupStructure,
     "SubmitOpportunity": SubmitOpportunity,
+    "NewOpportunity": NewOpportunity,
     "ScreeningBoard": ScreeningBoard,
     "ThemeAdmin": ThemeAdmin,
     "Settings": Settings,

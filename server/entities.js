@@ -182,7 +182,14 @@ async function updateOpportunity(id, patch, { actor } = {}) {
     })) {
       const err = new Error('Not permitted to modify this record'); err.status = 403; throw err;
     }
-    const checked = checkUpdate(row.data || {}, patch || {}, { actor, ownerOrgId: row.owner_org_id });
+    // Audit fields (created_date, updated_date, created_by, updated_by) are managed
+    // automatically by the database columns below and must not cause validation failures (BRD AUD-01).
+    const safePatch = { ...(patch || {}) };
+    delete safePatch.created_date;
+    delete safePatch.updated_date;
+    delete safePatch.created_by;
+    delete safePatch.updated_by;
+    const checked = checkUpdate(row.data || {}, safePatch, { actor, ownerOrgId: row.owner_org_id });
     if (!checked.ok) throw policyError(checked);
     if (!checked.changed.length) return rowToRecord(row);
     const before = rowToRecord(row);

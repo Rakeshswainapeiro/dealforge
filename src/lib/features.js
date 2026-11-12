@@ -11,6 +11,7 @@ export const CLIENT_FEATURE_DEFAULTS = {
   MyWork: true,
   Opportunity: true,
   SubmitOpportunity: true,
+  NewOpportunity: true,
   ScreeningBoard: true,
   OpportunityRoute: true,
   QandA: true,

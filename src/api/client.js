@@ -1005,7 +1005,10 @@ const pipeline = {
   transition(opportunityId, state, options = {}) {
     // Accept either a plain comment string (legacy) or an options object.
     const opts = typeof options === 'string' ? { comment: options } : (options || {});
-    const { comment, reasonCode, reasonText, question } = opts;
+    const comment = opts.comment;
+    const reasonCode = opts.reasonCode || opts.reason_code;
+    const reasonText = opts.reasonText || opts.reason_text;
+    const question = opts.question;
     return serverFetch(`/api/pipeline/opportunities/${encodeURIComponent(opportunityId)}/transition`, {
       method: 'POST',
       body: JSON.stringify({ state, comment, reason_code: reasonCode, reason_text: reasonText, question }),
