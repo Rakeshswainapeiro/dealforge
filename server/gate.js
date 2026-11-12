@@ -111,6 +111,7 @@ import {
   isProducerFor, isReviewer, isAdmin,
 } from './config/workflowStates.js';
 import { withLockedOpportunity, recordSteps, submitSteps, submitHooks, runAfterSubmit, onSubmit } from './lifecycle.js';
+import { canSeeInternalAssessment, projectGate, projectOpportunityRecord } from './config/aiVisibility.js';
 
 export { onSubmit };
 import {
@@ -1233,12 +1234,20 @@ gateRouter.delete('/documents/:id', async (req, res) => {
   catch (err) { sendErr(res, err); }
 });
 
+// Reviewer history and sufficiency detail are Sirius's internal assessment; the
+// subsidiary Preparer is refused at the server, not merely hidden on screen.
+function requireInternalAssessment(actor) {
+  if (!canSeeInternalAssessment(actor)) throw reviewError(403, 'Only the Sirius Investment Team may read the internal assessment');
+}
+
 gateRouter.get('/opportunities/:id/status', async (req, res) => {
   try {
     const opp = await loadOpportunity(req.params.id, req.actor);
     const theme = await getEffectiveTheme(opp.owner_org_id).catch(() => null);
     const gate = await evaluateGate(opp, { orgId: opp.owner_org_id, theme });
-    res.json({ opportunity_id: opp.id, state: opp.data?.status || 'draft', gate });
+    // A Preparer receives the checks on their own submission; the Sirius
+    // assessment blocks (filters, scorecard, flags) are removed server-side.
+    res.json({ opportunity_id: opp.id, state: opp.data?.status || 'draft', gate: projectGate(gate, req.actor) });
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1455,8 +1464,11 @@ export async function submitForScreening(opportunityId, actor, { comment = null 
 gateRouter.post('/opportunities/:id/submit', async (req, res) => {
   try {
     const result = await submitForScreening(req.params.id, req.actor);
-    if (!result.ok) return res.status(result.status).json(result.body);
-    res.json(result);
+    if (!result.ok) {
+      const body = result.body && result.body.gate ? { ...result.body, gate: projectGate(result.body.gate, req.actor) } : result.body;
+      return res.status(result.status).json(body);
+    }
+    res.json({ ...result, opportunity: projectOpportunityRecord(result.opportunity, req.actor) });
   } catch (err) { sendErr(res, err); }
 });
 
@@ -1536,6 +1548,7 @@ gateRouter.post('/opportunities/:id/hard-filter-review', async (req, res) => {
 // The hard-filter reviewer decision history for an opportunity (audit trail).
 gateRouter.get('/opportunities/:id/hard-filter-review/history', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     await loadOpportunity(req.params.id, req.actor);
     const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: req.params.id, limit: 50 });
     res.json(events.filter((e) => String(e.action || '').startsWith('hard_filter_')));
@@ -1568,6 +1581,7 @@ gateRouter.post('/opportunities/:id/soft-filter-review', async (req, res) => {
 // The soft-filter reviewer decision history for an opportunity (audit trail).
 gateRouter.get('/opportunities/:id/soft-filter-review/history', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     await loadOpportunity(req.params.id, req.actor);
     const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: req.params.id, limit: 50 });
     res.json(events.filter((e) => String(e.action || '').startsWith('soft_filter_')));
@@ -1610,6 +1624,7 @@ gateRouter.post('/opportunities/:id/disqualifier-review', async (req, res) => {
 // The disqualifier clear history for an opportunity (audit trail).
 gateRouter.get('/opportunities/:id/disqualifier-review/history', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     await loadOpportunity(req.params.id, req.actor);
     const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: req.params.id, limit: 50 });
     res.json(events.filter((e) => String(e.action || '').startsWith('disqualifier_')));
@@ -1664,7 +1679,7 @@ gateRouter.post('/opportunities/:id/scorecard-override', async (req, res) => {
       await writeAudit({
         client, entity: OPPORTUNITY_ENTITY, entityId: opp.id, action: 'scorecard_override',
         actor: req.actor, orgId: opp.owner_org_id,
-        after: { total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, by: override.by, reason: override.reason },
+        after: { total: gate.scorecard?.total, outcome: gate.scorecard?.outcome, by: override.by, reason: override.reason, at: override.at },
       });
       return { ok: true, opportunity_id: opp.id, override, scorecard: { ...gate.scorecard, override } };
     });
@@ -1675,6 +1690,7 @@ gateRouter.post('/opportunities/:id/scorecard-override', async (req, res) => {
 // The Gate 2 scorecard and override history for an opportunity (audit trail).
 gateRouter.get('/opportunities/:id/scorecard/history', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     await loadOpportunity(req.params.id, req.actor);
     const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: req.params.id, limit: 50 });
     res.json(events.filter((e) => String(e.action || '').startsWith('scorecard_')));
@@ -1686,6 +1702,7 @@ gateRouter.get('/opportunities/:id/scorecard/history', async (req, res) => {
 // overrides. Read by the preparer pre-submit and the reviewer post.
 gateRouter.get('/opportunities/:id/sufficiency', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     const opp = await loadOpportunity(req.params.id, req.actor);
     const gate = await evaluateGate(opp, { orgId: opp.owner_org_id });
     res.json(gate.sufficiency);
@@ -1727,6 +1744,7 @@ gateRouter.post('/opportunities/:id/sufficiency-override', async (req, res) => {
 // The sufficiency override history for an opportunity (audit trail).
 gateRouter.get('/opportunities/:id/sufficiency/history', async (req, res) => {
   try {
+    requireInternalAssessment(req.actor);
     await loadOpportunity(req.params.id, req.actor);
     const events = await listAuditEvents({ entity: OPPORTUNITY_ENTITY, entityId: req.params.id, limit: 50 });
     res.json(events.filter((e) => String(e.action || '').startsWith('sufficiency_')));

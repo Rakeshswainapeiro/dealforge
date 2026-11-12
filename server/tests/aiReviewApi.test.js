@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 process.env.RATE_LIMIT_DISABLED = '1';
 process.env.AUTH_RATE_LIMIT_DISABLED = '1';
+process.env.AI_AUTO_RUN = '0'; // no background run during these tests
 process.env.AUTH_ALLOW_HEADER_IDENTITY = '1'; // this test process only; the .env default stays off
 
 import { test, describe, before, after, beforeEach } from 'node:test';
@@ -18,8 +19,11 @@ let pool; let aiReviewRouter; let setAiDeps; let fetchWithTimeout;
 let online = false;
 let server; let BASE;
 
-const OWNER = 'deal.lead@infinia.local';      // creates / owns the opportunity
-const PEER = 'ceo@infinia.local';             // same organisation, different person
+// The internal AI review is the Sirius Investment Team's: the callers here are
+// Sirius reviewers. The subsidiary Preparer's refusal is covered in
+// aiVisibilityApi.test.js.
+const OWNER = 'deal.lead@sirius.local';       // a Sirius reviewer
+const PEER = 'vertical.head@sirius.local';    // a different Sirius reviewer
 const OUTSIDER = 'deal.lead@finstreet.local'; // different subsidiary
 const OPP = 'zz-hardening-' + crypto.randomBytes(4).toString('hex');
 const ORG = 'org-infinia-technologies-limited';
@@ -368,6 +372,15 @@ describe('analysis', () => {
     assert.ok(Array.isArray(a.data_gaps));
     const read = await call(`/opportunities/${OPP}/results`);
     assert.equal(read.data.results.funding.analysis.analysis.items.length, 1);
+    // The overview scores the funding tab from its analysis rating, beside the validation counts.
+    const funding = read.data.overview.tabs.find((x) => x.tab === 'funding');
+    assert.equal(funding.analysis_weight, 15);
+    assert.equal(funding.analysis_score, { Strong: 5, Adequate: 3, Weak: 1 }[a.recommendation.rating] ?? null);
+    const assessment = read.data.overview.analysis_assessment;
+    assert.equal(assessment.basis, 'analysis');
+    assert.ok(['Strong', 'Adequate', 'Weak', 'Incomplete'].includes(assessment.rating));
+    assert.ok(assessment.scorecard_links && Array.isArray(assessment.scorecard_links.growth_rate));
+    assert.ok('overall_validation' in read.data.overview && 'counts' in read.data.overview);
   });
 
   test('a failed re-run keeps the earlier good analysis and says why', async (t) => {

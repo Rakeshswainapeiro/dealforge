@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/AuthContext";
+import { isReviewerWorkspaceUser, isSubmittedStatus } from "@/lib/reviewerWorkspace";
+import ReviewerWorkspace from "@/components/review/ReviewerWorkspace";
 
 // The Sirius investment team (mirrors REVIEWER_ROLES on the server).
 const TEAM_ROLES = ["admin", "sirius_deal_lead", "sirius_vertical_head", "cio", "leadership", "cluster_head"];
@@ -67,7 +69,7 @@ export default function Opportunity() {
 
   const cardQuery = useQuery({ queryKey: ["pipeline", "card", id], queryFn: () => api.pipeline.card(id), enabled: Boolean(id), retry: false });
   const recordQuery = useQuery({ queryKey: ["entity", "DealOpportunity", id], queryFn: () => api.entities.DealOpportunity.get(id), enabled: Boolean(id) && cardQuery.isSuccess });
-  const screeningQuery = useQuery({ queryKey: ["pipeline", "screening", id], queryFn: () => api.pipeline.screening(id), enabled: cardQuery.isSuccess });
+  const screeningQuery = useQuery({ queryKey: ["pipeline", "screening", id], queryFn: () => api.pipeline.screening(id), enabled: cardQuery.isSuccess && isTeam, retry: false });
   const documentsQuery = useQuery({ queryKey: ["gate", "documents", id], queryFn: () => api.gate.documents(id), enabled: cardQuery.isSuccess });
   const timelineQuery = useQuery({ queryKey: ["pipeline", "timeline", id], queryFn: () => api.pipeline.timeline(id), enabled: cardQuery.isSuccess });
 
@@ -89,6 +91,15 @@ export default function Opportunity() {
 
   const card = cardQuery.data;
   const record = recordQuery.data || {};
+
+  // Sirius reviewers see a submitted opportunity in the read-only Reviewer
+  // Workspace. Everyone else (subsidiary roles, administrators) keeps this page.
+  if (isReviewerWorkspaceUser(user) && isSubmittedStatus(card.state)) {
+    if (!recordQuery.isSuccess) {
+      return <div className="flex items-center gap-2 p-6 text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading the opportunity...</div>;
+    }
+    return <ReviewerWorkspace card={card} record={record} />;
+  }
   const screening = screeningQuery.data?.screening;
   const documents = (Array.isArray(documentsQuery.data) ? documentsQuery.data : []).filter((d) => d.is_current);
   const events = timelineQuery.data?.events || [];
@@ -138,30 +149,33 @@ export default function Opportunity() {
               )}
             </Section>
 
-            <Section icon={Layers} title="Screening and evidence" description={screening?.message || "The initial screen, each check with its rationale and source."} testid="opp-screening">
-              {screeningQuery.isLoading && <p className="text-sm text-slate-500">Running the screen...</p>}
-              {(screening?.checks || []).map((check) => {
-                const meta = RESULT[check.result] || RESULT.not_applicable;
-                return (
-                  <div key={check.key} className="rounded-md border border-slate-200 p-3" data-testid={"opp-check-" + check.key}>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-medium text-slate-900">{check.label}</p>
-                      <Badge variant="outline" className={cn("gap-1", meta.className)}><meta.Icon className="h-3 w-3" />{meta.label}</Badge>
-                    </div>
-                    {check.rationale && <p className="mt-1 text-sm text-slate-600">{check.rationale}</p>}
-                    {Array.isArray(check.evidence_refs) && check.evidence_refs.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {check.evidence_refs.slice(0, 8).map((ref, i) => (
-                          <Badge key={i} variant="outline" className="font-normal text-xs" title={ref.source || ref.type}>
-                            {ref.label || ref.type}{ref.source ? ` · ${ref.source}` : ""}
-                          </Badge>
-                        ))}
+            {/* Screening is the Sirius team's assessment: the server refuses it to a Preparer, and the screen does not ask for it. */}
+            {isTeam && (
+              <Section icon={Layers} title="Screening and evidence" description={screening?.message || "The initial screen, each check with its rationale and source."} testid="opp-screening">
+                {screeningQuery.isLoading && <p className="text-sm text-slate-500">Running the screen...</p>}
+                {(screening?.checks || []).map((check) => {
+                  const meta = RESULT[check.result] || RESULT.not_applicable;
+                  return (
+                    <div key={check.key} className="rounded-md border border-slate-200 p-3" data-testid={"opp-check-" + check.key}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-medium text-slate-900">{check.label}</p>
+                        <Badge variant="outline" className={cn("gap-1", meta.className)}><meta.Icon className="h-3 w-3" />{meta.label}</Badge>
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </Section>
+                      {check.rationale && <p className="mt-1 text-sm text-slate-600">{check.rationale}</p>}
+                      {Array.isArray(check.evidence_refs) && check.evidence_refs.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {check.evidence_refs.slice(0, 8).map((ref, i) => (
+                            <Badge key={i} variant="outline" className="font-normal text-xs" title={ref.source || ref.type}>
+                              {ref.label || ref.type}{ref.source ? ` · ${ref.source}` : ""}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </Section>
+            )}
 
             {isTeam && (
               <Section icon={Database} title="External evidence" description="Values from connected tools and desk research, each with source, time, method and confidence." testid="opp-evidence">
@@ -191,25 +205,27 @@ export default function Opportunity() {
               <QuestionsPanel card={card} />
             </CardContent></Card>
 
-            <Section icon={ShieldAlert} title="Scores and flags" testid="opp-scores">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Scorecard</p>
-                  <p className="font-semibold">{sc?.total != null ? `${sc.total} / 5` : "Not scored"}</p>
-                  {sc?.outcome && <p className="text-xs text-slate-500">{sc.outcome.replace(/_/g, " ")}</p>}</div>
-                <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Soft filters</p>
-                  <p className="font-semibold">{screening?.soft_filters?.average != null ? `${screening.soft_filters.average} / 5` : "—"}</p>
-                  {screening?.soft_filters?.outcome && <p className="text-xs text-slate-500">{screening.soft_filters.outcome}</p>}</div>
-                <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Quality score</p>
-                  <p className="font-semibold">{screening?.quality_score?.score != null ? `${screening.quality_score.score}%` : "—"}</p></div>
-                <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Related party</p>
-                  <p className="font-semibold">{card.related_party_overlay ? card.related_party_overlay.status_label : "Not flagged"}</p></div>
-              </div>
-              {flags.length > 0 ? (
-                <ul className="space-y-1">{flags.map((f) => (
-                  <li key={f.key} className="flex items-center gap-2 text-sm text-red-700"><AlertTriangle className="h-3.5 w-3.5" />{f.label}</li>
-                ))}</ul>
-              ) : <p className="text-xs text-slate-500">No open disqualifier flags.</p>}
-            </Section>
+            {isTeam && (
+              <Section icon={ShieldAlert} title="Scores and flags" testid="opp-scores">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Scorecard</p>
+                    <p className="font-semibold">{sc?.total != null ? `${sc.total} / 5` : "Not scored"}</p>
+                    {sc?.outcome && <p className="text-xs text-slate-500">{sc.outcome.replace(/_/g, " ")}</p>}</div>
+                  <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Soft filters</p>
+                    <p className="font-semibold">{screening?.soft_filters?.average != null ? `${screening.soft_filters.average} / 5` : "—"}</p>
+                    {screening?.soft_filters?.outcome && <p className="text-xs text-slate-500">{screening.soft_filters.outcome}</p>}</div>
+                  <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Quality score</p>
+                    <p className="font-semibold">{screening?.quality_score?.score != null ? `${screening.quality_score.score}%` : "—"}</p></div>
+                  <div className="rounded-md bg-slate-50 p-2"><p className="text-xs text-slate-500">Related party</p>
+                    <p className="font-semibold">{card.related_party_overlay ? card.related_party_overlay.status_label : "Not flagged"}</p></div>
+                </div>
+                {flags.length > 0 ? (
+                  <ul className="space-y-1">{flags.map((f) => (
+                    <li key={f.key} className="flex items-center gap-2 text-sm text-red-700"><AlertTriangle className="h-3.5 w-3.5" />{f.label}</li>
+                  ))}</ul>
+                ) : <p className="text-xs text-slate-500">No open disqualifier flags.</p>}
+              </Section>
+            )}
 
             {isTeam && (
               <Section icon={ExternalLink} title="Tools" description="Open a licensed tool with this opportunity in context." testid="opp-tools">

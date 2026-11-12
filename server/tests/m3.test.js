@@ -212,7 +212,7 @@ describe('theme alignment (J3)', () => {
   test('an in-theme submission is aligned and scored', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     assert.equal(status, 200);
     assert.equal(data.alignment.has_theme, true);
     assert.equal(data.alignment.aligned, true);
@@ -235,7 +235,7 @@ describe('theme alignment (J3)', () => {
       narrative_why_us: 'We already own resorts.',
       decision_sought: 'Approve diligence.',
     } });
-    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     assert.equal(data.alignment.aligned, false);
     assert.ok(data.alignment.reasons.length > 0);
 
@@ -260,7 +260,7 @@ describe('theme alignment (J3)', () => {
   test('the AED floor surfaces as a non-blocking signal', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead', { ...FULL_FIELDS, total_commitment_aed: 5 });
-    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     assert.ok(data.alignment.signals.some((s) => s.type === 'floor'));
   });
 
@@ -277,7 +277,7 @@ describe('theme alignment per-dimension citations (W3-13 / SCR-02)', () => {
   test('alignment returns a graded verdict for each theme dimension', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     assert.equal(status, 200);
     const { dimensions, dimension_summary } = data.alignment;
     assert.ok(Array.isArray(dimensions) && dimensions.length >= 3, 'expected per-dimension verdicts');
@@ -292,7 +292,7 @@ describe('theme alignment per-dimension citations (W3-13 / SCR-02)', () => {
   test('an in-theme deal cites the entity strategy document on matched dimensions', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     const dims = data.alignment.dimensions;
     const sector = dims.find((d) => d.key === 'sector');
     assert.equal(sector.verdict, 'aligned');
@@ -316,7 +316,7 @@ describe('theme alignment per-dimension citations (W3-13 / SCR-02)', () => {
       narrative_why_us: 'We already own resorts.',
       decision_sought: 'Approve diligence.',
     });
-    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-deal-lead' });
+    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/alignment', { user: 'user-cio' });
     const sector = data.alignment.dimensions.find((d) => d.key === 'sector');
     assert.equal(sector.verdict, 'partly', 'a differing sector with a value present is partly aligned');
     assert.ok(['not_aligned', 'partly'].includes(data.alignment.dimensions.find((d) => d.key === 'keywords').verdict));
@@ -327,7 +327,7 @@ describe('theme alignment per-dimension citations (W3-13 / SCR-02)', () => {
   test('the screening panel alignment check quotes the source passage', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const { data } = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     const check = data.screening.checks.find((c) => c.key === 'alignment');
     assert.ok(check, 'alignment check present');
     assert.match(check.rationale, /Source: .+Strategy/);
@@ -935,7 +935,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
     // The proposal set is exposed before any capture, and nothing counts yet.
-    const before = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const before = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     const pre = before.data.scorecard || before.data.screening?.scorecard;
     assert.equal(pre.complete, false);
     assert.equal(pre.awaiting_review, true);
@@ -1013,7 +1013,7 @@ describe('Gate 2 weighted scorecard (W3-05 / SCO-02)', () => {
     assert.ok(Array.isArray(reread.data));
     const scored = reread.data.find((e) => e.action === 'scorecard_scored');
     assert.equal(scored.after.version, base.version);
-    const opp = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const opp = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(opp.data.screening.scorecard.pass_threshold, newBar);
 
     // Restore the shipped bar so later suites see the default calibration.
@@ -1125,7 +1125,7 @@ describe('portfolio conflict & synergy (W3-10 / W3-11)', () => {
     for (const key of ['business_plan', 'financials', 'cap_table']) {
       await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: uploadForm(key) });
     }
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(res.status, 200);
     const s = res.data.screening;
 
@@ -1159,7 +1159,7 @@ describe('portfolio conflict & synergy (W3-10 / W3-11)', () => {
     for (const key of ['business_plan', 'financials', 'cap_table']) {
       await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: uploadForm(key) });
     }
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     const check = (res.data.screening.checks || []).find((c) => c.key === 'synergy_conflict');
     assert.equal(check.detail.conflict_flag_count, 0);
     assert.equal(check.detail.synergies.length, 0);
@@ -1210,7 +1210,7 @@ describe('sanctions / adverse-media confirmation (SCR-08)', () => {
     for (const key of ['business_plan', 'financials', 'cap_table', 'adverse_media_evidence']) {
       await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: uploadForm(key) });
     }
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(res.status, 200);
     const am = res.data.screening.adverse_media;
     assert.ok(am, 'the panel exposes the adverse-media block');
@@ -1236,7 +1236,7 @@ describe('sanctions / adverse-media confirmation (SCR-08)', () => {
     for (const key of ['business_plan', 'financials', 'cap_table']) {
       await api('/api/gate/opportunities/' + draft.id + '/documents', { method: 'POST', user: 'user-deal-lead', form: uploadForm(key) });
     }
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     const am = res.data.screening.adverse_media;
     assert.equal(am.status, 'clear');
     assert.equal(am.satisfied, false);
@@ -1251,7 +1251,7 @@ describe('sanctions / adverse-media confirmation (SCR-08)', () => {
       body: { ...FULL_FIELDS, status: 'draft', opportunity_name: 'W3-12 adverse probe', adverse_media_confirmation: 'adverse' },
     });
     const draft = created.data;
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     const am = res.data.screening.adverse_media;
     assert.equal(am.status, 'adverse');
     assert.ok(am.flags.some((f) => f.code === 'adverse_media_exposure'));
@@ -1338,7 +1338,7 @@ describe('strategy profile version per screening (W4-03 / ENT-01)', () => {
     const version = pub.data.version;
 
     const { draft } = await makeSubmitted('user-deal-lead');
-    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const res = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(res.status, 200);
     assert.ok(res.data.screening.strategy_profile, 'panel carries the profile in force');
     assert.equal(res.data.screening.strategy_profile.version, version);
@@ -1352,14 +1352,14 @@ describe('strategy profile version per screening (W4-03 / ENT-01)', () => {
       method: 'POST', user: 'user-admin', body: { org_id: INFINIA, summary: 'W4-03 v-a' },
     });
     const { draft } = await makeSubmitted('user-deal-lead');
-    const before = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const before = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(before.data.screening.strategy_profile.version, first.data.version);
 
     const second = await api('/api/strategy/profile', {
       method: 'POST', user: 'user-admin', body: { org_id: INFINIA, summary: 'W4-03 v-b' },
     });
     assert.equal(second.data.version, first.data.version + 1);
-    const after = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const after = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(after.data.screening.strategy_profile.version, second.data.version);
     assert.equal(after.data.screening.screening_record.strategy_profile_version, second.data.version);
     await api('/api/entities/DealOpportunity/' + draft.id, { method: 'DELETE', user: 'user-deal-lead' });
@@ -1419,7 +1419,7 @@ describe('Sirius group mandate (W4-04 / ENT-03)', () => {
   test('the screening panel carries the advisory mandate fit', async (t) => {
     if (!online) return t.skip('server offline');
     const { draft } = await makeSubmitted('user-deal-lead');
-    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-deal-lead' });
+    const { status, data } = await api('/api/pipeline/opportunities/' + draft.id + '/screening', { user: 'user-cio' });
     assert.equal(status, 200);
     const fit = data.screening.mandate_fit;
     assert.ok(fit, 'a mandate-fit section rides along');
@@ -1803,7 +1803,11 @@ describe('connectors, evidence and tool launchpad (INTG-07/11/12, EXP-03, ACC-01
     const subsidiary = await api(url, { user: 'user-deal-lead' });
     assert.equal(subsidiary.status, 403, 'evidence is the investment team\'s material');
 
-    // A disabled connector exchanges no data.
+    // A disabled connector exchanges no data. Start from grata disabled, so a
+    // re-run against the same database (where an earlier run enabled it) holds.
+    const before = await api('/api/connectors', { user: 'user-admin' });
+    const disabled = before.data.config.connectors.map((c) => (c.key === 'grata' ? { ...c, enabled: false } : c));
+    assert.equal((await api('/api/connectors', { method: 'PUT', user: 'user-admin', body: { connectors: disabled } })).status, 200);
     const off = await api(url + '/import', { method: 'POST', user: 'user-sirius-deal-lead', body: { connector: 'grata', payload: { employee_count: 10 } } });
     assert.equal(off.status, 409);
     const cfg = await api('/api/connectors', { user: 'user-admin' });

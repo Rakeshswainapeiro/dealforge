@@ -342,6 +342,22 @@ export function parseStatementModel({ buffer, filename = '', mimetype = '' } = {
   }
 }
 
+// The raw statement lines ({ statement, label, values }) of an uploaded model or
+// of a table extracted from a document, for the financial engine to calculate
+// from. Takes a text file (csv/tsv/json) or an already-split grid. Never throws.
+export function parseStatementLines({ buffer, filename = '', mimetype = '', grid = null } = {}) {
+  try {
+    if (Array.isArray(grid)) return parseGrid(grid);
+    const text = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer ?? '');
+    const ext = String(filename).slice(String(filename).lastIndexOf('.')).toLowerCase();
+    if (ext === '.json' || norm(mimetype) === 'applicationjson') return parseJson(text);
+    if (ext === '.tsv' || ext === '.txt') return parseGrid(parseDelimited(text, '\t'));
+    return parseGrid(parseDelimited(text, ','));
+  } catch {
+    return [];
+  }
+}
+
 // The canonical, balanced Sirius model as a parsed summary. Used by the sample
 // fixtures so the demo shows a checked, balanced three-statement model.
 export function siriusTemplateModel() {
