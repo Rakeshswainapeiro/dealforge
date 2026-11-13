@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/AuthContext";
 import { useTranslation } from "@/lib/i18n";
+import { isSiriusRole } from "@/lib/reviewerWorkspace";
+import SiriusMyWork from "@/components/sirius/SiriusMyWork";
 import { AlarmClock, ClipboardList, Inbox, Loader2, MessagesSquare, UserCheck } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -71,9 +73,13 @@ function Block({ icon: Icon, title, description, items, empty, render, testid })
 
 export default function MyWork() {
   const { user } = useAuth();
-const { t, lang } = useTranslation();
+  const { t, lang } = useTranslation();
   const query = useQuery({ queryKey: ["pipeline", "my-work"], queryFn: () => api.pipeline.myWork(), refetchInterval: 60000 });
   const data = query.data;
+
+  if (isSiriusRole(user)) {
+    return <SiriusMyWork />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">

@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/AuthContext";
 import { isReviewerWorkspaceUser, isSubmittedStatus } from "@/lib/reviewerWorkspace";
+import { isSiriusRole } from "@/lib/siriusAuth";
 import ReviewerWorkspace from "@/components/review/ReviewerWorkspace";
+import SiriusOpportunityReview from "@/components/sirius/SiriusOpportunityReview";
 
 // The Sirius investment team (mirrors REVIEWER_ROLES on the server).
 const TEAM_ROLES = ["admin", "sirius_deal_lead", "sirius_vertical_head", "cio", "leadership", "cluster_head"];
@@ -94,9 +96,12 @@ export default function Opportunity() {
 
   // Sirius reviewers see a submitted opportunity in the read-only Reviewer
   // Workspace. Everyone else (subsidiary roles, administrators) keeps this page.
-  if (isReviewerWorkspaceUser(user) && isSubmittedStatus(card.state)) {
+  if (isReviewerWorkspaceUser(user) && (isSubmittedStatus(card.state) || card.state === 'draft')) {
     if (!recordQuery.isSuccess) {
       return <div className="flex items-center gap-2 p-6 text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading the opportunity...</div>;
+    }
+    if (isSiriusRole(user)) {
+      return <SiriusOpportunityReview card={card} record={record} onMutate={() => { cardQuery.refetch(); recordQuery.refetch(); }} />;
     }
     return <ReviewerWorkspace card={card} record={record} />;
   }

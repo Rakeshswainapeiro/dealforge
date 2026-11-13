@@ -2454,13 +2454,13 @@ export default function SubmitOpportunity() {
         </div>
 
         {config && (
-           <p className="text-xs text-slate-400" data-testid="disqualifiers-scale">
-             Valuation premium band: {config.valuation_premium_min}&ndash;{config.valuation_premium_max}% over the tightest comparable.
-           </p>
-         )}
-       </div>
-     );
-   };
+          <p className="text-xs text-slate-400" data-testid="disqualifiers-scale">
+            Valuation premium band: {config.valuation_premium_min}&ndash;{config.valuation_premium_max}% over the tightest comparable.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   // Sanctions / adverse-media manual confirmation (W3-12 / SCR-08). Screening
   // for sanctions and adverse media is a manual, human-verified step: the
@@ -2481,8 +2481,8 @@ export default function SubmitOpportunity() {
       status === "clear" && evaluated.satisfied
         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : status === "adverse"
-        ? "border-red-200 bg-red-50 text-red-700"
-        : "border-amber-200 bg-amber-50 text-amber-700";
+          ? "border-red-200 bg-red-50 text-red-700"
+          : "border-amber-200 bg-amber-50 text-amber-700";
     return (
       <div className="space-y-3" data-testid="adverse-media-card">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3055,871 +3055,871 @@ export default function SubmitOpportunity() {
           {/* Capture + gate ------------------------------------------------------ */}
           <div className={captureView ? "lg:col-span-3 grid lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start" : "hidden"}>
             <div className="space-y-6 min-w-0">
-            {screenOpen && !selectedId ? (
-              <Card className="border-dashed border-slate-300 bg-white/70 shadow-sm" data-testid="capture-locked">
-                <CardContent className="p-8 text-center space-y-2">
-                  <ShieldCheck className="w-8 h-8 text-slate-400 mx-auto" />
-                  <p className="font-medium text-slate-800">Complete the self-screen to open the capture form</p>
-                  <p className="text-sm text-slate-500">
-                    Answer the six questions above and click <span className="font-medium">Run self-screen</span>. Once it
-                    passes, the six-section Opportunity Overview opens here.
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-            <Card className="border-slate-200 shadow-sm">
-              <CardHeader className="border-b border-slate-100">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <FileText className="w-5 h-5 text-teal-600" />
-                    {selectedId ? "Edit opportunity" : "New opportunity"}
-                  </CardTitle>
-                  {renderStatusBadge(form.status || DRAFT_STATUS)}
-                </div>
-                <CardDescription>
-                  Step {activeTab + 1} of {CAPTURE_TABS.length}. Saved as a <span className="font-medium text-slate-700">draft</span> until it passes the gate.
-                </CardDescription>
-              </CardHeader>
-              <div
-                role="tablist"
-                aria-label="Opportunity sections"
-                className="flex gap-1 overflow-x-auto border-b border-slate-100 px-4"
-                data-testid="capture-tabs"
-              >
-                {CAPTURE_TABS.map((tab, index) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === index}
-                    data-testid={`capture-tab-${tab.key}`}
-                    onClick={() => setActiveTab(index)}
-                    className={cn(
-                      "flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-3 text-sm transition-colors",
-                      activeTab === index
-                        ? "border-teal-600 font-semibold text-teal-700"
-                        : "border-transparent text-slate-500 hover:text-slate-800"
-                    )}
-                  >
-                    {tab.label}
-                    {selectedId && missingByTab[index] > 0 && (
-                      <span
-                        className="rounded-full bg-red-100 px-1.5 text-[11px] font-medium text-red-700"
-                        title={`${missingByTab[index]} item(s) missing`}
-                        data-testid={`capture-tab-missing-${tab.key}`}
-                      >
-                        {missingByTab[index]}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-              <CardContent className="p-6 space-y-6">
-                {fieldGroups.map((group) => (
+              {screenOpen && !selectedId ? (
+                <Card className="border-dashed border-slate-300 bg-white/70 shadow-sm" data-testid="capture-locked">
+                  <CardContent className="p-8 text-center space-y-2">
+                    <ShieldCheck className="w-8 h-8 text-slate-400 mx-auto" />
+                    <p className="font-medium text-slate-800">Complete the self-screen to open the capture form</p>
+                    <p className="text-sm text-slate-500">
+                      Answer the six questions above and click <span className="font-medium">Run self-screen</span>. Once it
+                      passes, the six-section Opportunity Overview opens here.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="border-slate-200 shadow-sm">
+                  <CardHeader className="border-b border-slate-100">
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <FileText className="w-5 h-5 text-teal-600" />
+                        {selectedId ? "Edit opportunity" : "New opportunity"}
+                      </CardTitle>
+                      {renderStatusBadge(form.status || DRAFT_STATUS)}
+                    </div>
+                    <CardDescription>
+                      Step {activeTab + 1} of {CAPTURE_TABS.length}. Saved as a <span className="font-medium text-slate-700">draft</span> until it passes the gate.
+                    </CardDescription>
+                  </CardHeader>
                   <div
-                    key={group.key}
-                    className={cn("space-y-4", tabIndexForSection(group.key) !== activeTab && "hidden")}
+                    role="tablist"
+                    aria-label="Opportunity sections"
+                    className="flex gap-1 overflow-x-auto border-b border-slate-100 px-4"
+                    data-testid="capture-tabs"
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <h3 className="font-semibold text-slate-900">
-                          {SECTION_TITLES[group.key] || group.label}
-                        </h3>
-                        <p className="text-sm text-slate-500">{group.description}</p>
-                      </div>
-                      {sectionProgressByKey.get(group.key) && (
-                        <div className="w-32 shrink-0" data-testid={`section-progress-${group.key}`}>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-slate-500">
-                              {sectionProgressByKey.get(group.key).present}/
-                              {sectionProgressByKey.get(group.key).total}
-                            </span>
-                            <span
-                              className={cn(
-                                "font-medium",
-                                sectionProgressByKey.get(group.key).complete
-                                  ? "text-emerald-600"
-                                  : "text-slate-500"
-                              )}
-                            >
-                              {sectionProgressByKey.get(group.key).progress}%
-                            </span>
-                          </div>
-                          <Progress
-                            value={sectionProgressByKey.get(group.key).progress}
-                            className="h-1.5 mt-1"
-                          />
-                        </div>
-                      )}
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {group.fields
-                        .filter((field) => !(group.key === "financials"
-                          && (VALUATION_CARD_KEYS.has(field.key) || CROSS_BORDER_CARD_KEYS.has(field.key) || CURRENCY_CARD_KEYS.has(field.key)))
-                          && !(group.key === "risks" && (HARD_FILTER_CARD_KEYS.has(field.key) || SOFT_FILTER_CARD_KEYS.has(field.key) || DISQUALIFIER_CARD_KEYS.has(field.key) || ADVERSE_MEDIA_CARD_KEYS.has(field.key))))
-                        .map((field) => (
-                        <div
-                          key={field.key}
-                          className={cn(
-                            "space-y-2",
-                            (field.type === "textarea" || !FIELD_TYPES.has(field.type)) && "md:col-span-2"
-                          )}
-                        >
-                          <Label htmlFor={field.key} className="flex items-center gap-1.5">
-                            {field.label}
-                            {field.required && (
-                              <span className="text-red-500" title="Required to submit">*</span>
-                            )}
-                            {selectedId && gate && (
-                              missingKeys.has(field.key) ? (
-                                <XCircle className="w-3.5 h-3.5 text-red-500" />
-                              ) : (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                              )
-                            )}
-                          </Label>
-                          {renderField(field)}
-                        </div>
-                      ))}
-                    </div>
-                    {group.key === "header" && <Separator className="!mt-6" />}
-                    {group.key === "risks" && (
-                      <>
-                        <Separator className="!mt-6" />
-                        {renderHardFilters()}
-                        <Separator />
-                        {renderSoftFilters()}
-                        <Separator />
-                        {renderDisqualifiers()}
-                        <Separator />
-                        {renderAdverseMedia()}
-                        <Separator />
-                      </>
-                    )}
-                    {group.key === "financials" && (
-                      <>
-                        <Separator className="!mt-6" />
-                        {renderCurrency()}
-                        <Separator />
-                        {renderFinancialGrid()}
-                        {renderStatementModelCard()}
-                        {renderReturnsCard()}
-                        {renderWaccCard()}
-                        {renderHurdleTable()}
-                        <Separator />
-                        {renderValuation()}
-                        <Separator />
-                        {renderCrossBorder()}
-                        {crossBorderGate?.applies && <Separator />}
-                      </>
-                    )}
-                    {group.key === "funding" && (
-                      <>
-                        <Separator className="!mt-6" />
-                        {renderSourcesUses()}
-                        <Separator />
-                        {renderBudgetStatus()}
-                        <Separator />
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
-                <Separator />
-
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="owner_email" className="flex items-center gap-1.5">
-                      <User className="w-3.5 h-3.5 text-slate-500" />
-                      {t("submit.owner")}
-                    </Label>
-                    {users.length > 0 ? (
-                      <Select
-                        value={form.owner_email || "__none__"}
-                        onValueChange={(value) => handleChange("owner_email", value === "__none__" ? "" : value)}
-                      >
-                        <SelectTrigger id="owner_email">
-                          <SelectValue placeholder="Assign an owner..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Unassigned</SelectItem>
-                          {users.map((user) => (
-                            <SelectItem key={user.id || user.email} value={user.email}>
-                              {user.full_name ? `${user.full_name} (${user.email})` : user.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        id="owner_email"
-                        type="email"
-                        value={form.owner_email || ""}
-                        placeholder="owner@company.com"
-                        onChange={(event) => handleChange("owner_email", event.target.value)}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    onClick={handleSave}
-                    disabled={busy || !editable}
-                    title={editable ? undefined : "Locked while Sirius reviews it"}
-                    className="bg-teal-600 hover:bg-teal-700 gap-2"
-                  >
-                    {saveMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Save className="w-4 h-4" />
-                    )}
-                    {selectedId ? "Save changes" : "Save as draft"}
-                  </Button>
-                  {(!selectedId || currentState === DRAFT_STATUS) && (
-                  <Button
-                    variant="outline"
-                    className="gap-2"
-                    disabled={!selectedId || busy}
-                    onClick={handleSubmit}
-                  >
-                    {submitMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                    {t("submit.submitForScreening")}
-                  </Button>
-                  )}
-                  {!editable && (
-                    <span className="text-sm text-slate-500" data-testid="capture-readonly">
-                      Locked in {STATUS_META[currentState]?.label || currentState}. Sirius will unlock it if they need more information.
-                    </span>
-                  )}
-                  {!selectedId && (
-                    <span className="text-sm text-slate-500">Save the draft first to unlock the gate checklist.</span>
-                  )}
-                </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4" data-testid="capture-footer">
-                  <Button
-                    variant="outline"
-                    disabled={activeTab === 0}
-                    onClick={() => goToTab(activeTab - 1)}
-                    data-testid="capture-back"
-                  >
-                    Back
-                  </Button>
-                  {activeTab < LAST_TAB && (
-                    <Button
-                      className="bg-teal-600 hover:bg-teal-700 gap-2"
-                      disabled={busy}
-                      onClick={handleSaveAndContinue}
-                      data-testid="capture-save-continue"
-                    >
-                      {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-                      Save and Continue
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-            )}
-
-            {/* Information requested (WF-04) -------------------------------------- */}
-            {infoRequested && (
-              <Card className="border-amber-200 bg-amber-50/60 shadow-sm" data-testid="info-request-panel">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base text-amber-900">
-                    <AlertTriangle className="w-4 h-4" /> Sirius has requested information
-                  </CardTitle>
-                  <CardDescription className="text-amber-900/80">
-                    The form is unlocked. Answer each question, update the record if needed, then send your response.
-                    A change to the figures clears the CEO and CFO attestations, so they re-confirm before you respond.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {infoThreadsQuery.isLoading && (
-                    <p className="text-sm text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading questions...</p>
-                  )}
-                  {infoThreads.map((thread) => (
-                    <div key={thread.id} className="rounded-md border border-amber-200 bg-white p-3 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="font-medium text-slate-900">{thread.subject}</p>
-                        <div className="flex items-center gap-2">
-                          {thread.due_at && (
-                            <Badge variant="outline" className={cn(thread.overdue ? "bg-red-100 text-red-800 border-red-200" : "bg-slate-100 text-slate-700")}>
-                              due {formatDateTime(thread.due_at)}
-                            </Badge>
-                          )}
-                          <Badge variant="outline" className={thread.display_status === "open" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-emerald-100 text-emerald-800 border-emerald-200"}>
-                            {thread.display_status === "open" ? "awaiting your answer" : thread.display_status}
-                          </Badge>
-                        </div>
-                      </div>
-                      {thread.first_message && <p className="text-sm text-slate-700 whitespace-pre-wrap">{thread.first_message}</p>}
-                      {thread.display_status === "open" && (
-                        <div className="space-y-2">
-                          <Textarea
-                            rows={3}
-                            value={answers[thread.id] || ""}
-                            placeholder="Your answer..."
-                            data-testid={`info-answer-${thread.id}`}
-                            onChange={(event) => setAnswers((prev) => ({ ...prev, [thread.id]: event.target.value }))}
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-2"
-                            disabled={!String(answers[thread.id] || "").trim() || answerMutation.isPending}
-                            onClick={() => answerMutation.mutate({ threadId: thread.id, body: answers[thread.id].trim() })}
-                          >
-                            <Send className="w-3.5 h-3.5" /> Send answer
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <Separator />
-                  <div className="space-y-2">
-                    <Label htmlFor="response-note">Note to Sirius (optional)</Label>
-                    <Textarea id="response-note" rows={2} value={responseNote} onChange={(event) => setResponseNote(event.target.value)} />
-                    <Button
-                      className="bg-teal-600 hover:bg-teal-700 gap-2"
-                      disabled={busy || unanswered.length > 0}
-                      title={unanswered.length > 0 ? "Answer every question first" : undefined}
-                      data-testid="send-response"
-                      onClick={() => respondMutation.mutate()}
-                    >
-                      {respondMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      Send response to Sirius
-                    </Button>
-                    {unanswered.length > 0 && (
-                      <p className="text-xs text-amber-800">{unanswered.length} question(s) still need an answer.</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Submit result ------------------------------------------------------ */}
-            {submitResult && (
-              <Alert className="border-emerald-200 bg-emerald-50" data-testid="submit-success">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <AlertTitle className="text-emerald-900">Submitted for screening</AlertTitle>
-                <AlertDescription className="text-emerald-800">
-                  New state: <span className="font-semibold">{STATUS_META[normalizeState(submitResult.state)]?.label || submitResult.state}</span>.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {blockedGate && (
-              <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="submit-blocked">
-                <AlertTriangle className="h-4 w-4 text-red-600" />
-                <AlertTitle className="text-red-900">Submission blocked</AlertTitle>
-                <AlertDescription className="text-red-900">
-                  <p className="mb-3">
-                    {blockedMessage ||
-                      "The opportunity did not pass the document gate. Resolve the items below and try again."}
-                  </p>
-                  <div className="space-y-3">
-                    {Object.keys(blockedGroups).map((section) =>
-                      blockedGroups[section].length > 0 ? (
-                        <div key={section}>
-                          <p className="font-semibold uppercase tracking-wide text-xs">
-                            {SECTION_TITLES[section] || (fieldModel?.sections || []).find((s) => s.key === section)?.label || section} ({blockedGroups[section].length})
-                          </p>
-                          <ul className="list-disc pl-5 mt-1 space-y-0.5">
-                            {blockedGroups[section].map((item) => (
-                              <li key={`${item.type}-${item.key}`}>{item.label}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null
-                    )}
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
-            {/* Qualifying gates (W1-05 / INT-08) ---------------------------------- */}
-            {selectedId && gate?.qualifying_gates && (
-              <Card className="border-slate-200 shadow-sm" data-testid="qualifying-gates">
-                <CardHeader className="border-b border-slate-100">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <ClipboardCheck className="w-5 h-5 text-teal-600" />
-                      Ten qualifying gates
-                    </CardTitle>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "font-medium",
-                        gate.qualifying_gates.complete
-                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                          : "bg-amber-100 text-amber-800 border-amber-200"
-                      )}
-                      data-testid="qualifying-gates-status"
-                    >
-                      {gate.qualifying_gates.complete
-                        ? "All ten ready"
-                        : `${gate.qualifying_gates.blocking.length} gate(s) blocking`}
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    Every gate needs a <span className="font-medium">Yes</span> and its linked evidence. A No on any gate
-                    blocks submission with the not-ready message.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  {gate.qualifying_gates.blocking.length > 0 && (
-                    <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="qualifying-gates-blocked">
-                      <AlertTriangle className="h-4 w-4 text-red-600" />
-                      <AlertTitle className="text-red-900">Not ready</AlertTitle>
-                      <AlertDescription className="text-red-900">
-                        {gate.qualifying_gates.message}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {gate.qualifying_gates.gates.map((g) => (
-                      <div
-                        key={g.key}
-                        className={cn(
-                          "rounded-lg border p-4 space-y-3",
-                          g.ready ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
-                        )}
-                        data-testid={`qualifying-gate-${g.key}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-medium text-slate-900 flex items-center gap-2">
-                              {g.ready ? (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                              ) : (
-                                <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                              )}
-                              {g.number}. {g.label}
-                            </p>
-                            <p className="text-sm text-slate-600 mt-1">{g.question}</p>
-                          </div>
-                          <Select
-                            value={form[g.answer_key] || g.answer || ""}
-                            onValueChange={(value) => handleChange(g.answer_key, value)}
-                          >
-                            <SelectTrigger id={g.answer_key} className="w-24 shrink-0">
-                              <SelectValue placeholder="—" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="yes">Yes</SelectItem>
-                              <SelectItem value="no">No</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <ul className="space-y-1">
-                          {g.evidence.map((e) => (
-                            <li key={e.key} className="flex items-center gap-2 text-xs">
-                              {e.present ? (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                              ) : (
-                                <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                              )}
-                              <span className={e.present ? "text-slate-600" : "text-slate-900 font-medium"}>
-                                Evidence: {e.label}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                        {!g.ready && g.reason && (
-                          <p className="text-xs text-amber-800">{g.reason}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* CEO + CFO attestation gate (W1-06 / INT-09) ----------------------- */}
-            {selectedId && gate?.attestations && (
-              <Card className="border-slate-200 shadow-sm" data-testid="attestations">
-                <CardHeader className="border-b border-slate-100">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <ShieldCheck className="w-5 h-5 text-teal-600" />
-                      CEO &amp; CFO attestation
-                    </CardTitle>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "font-medium",
-                        gate.attestations.complete
-                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                          : "bg-amber-100 text-amber-800 border-amber-200"
-                      )}
-                      data-testid="attestations-status"
-                    >
-                      {gate.attestations.complete
-                        ? "Both recorded"
-                        : `${gate.attestations.missing.length} outstanding`}
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    Two named attestations are required before submission. Each records the person,
-                    the timestamp and the IP, and each is written to the audit log.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  {!gate.attestations.complete && (
-                    <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="attestations-blocked">
-                      <AlertTriangle className="h-4 w-4 text-red-600" />
-                      <AlertTitle className="text-red-900">Not ready</AlertTitle>
-                      <AlertDescription className="text-red-900">
-                        {gate.attestations.message}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {gate.attestations.roles.map((a) => {
-                      const canSignThis =
-                        !a.attested &&
-                        ((currentUser?.roles || []).includes(a.role) || (currentUser?.roles || []).includes("admin"));
-                      return (
-                        <div
-                          key={a.key}
-                          className={cn(
-                            "rounded-lg border p-4 space-y-3",
-                            a.attested ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
-                          )}
-                          data-testid={`attestation-${a.key}`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <p className="font-medium text-slate-900 flex items-center gap-2">
-                              {a.attested ? (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                              ) : (
-                                <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
-                              )}
-                              {a.label}
-                            </p>
-                            {a.attested && (
-                              <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                                Recorded
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-sm text-slate-600 italic">“{a.text}”</p>
-                          {a.attested ? (
-                            <p className="text-xs text-slate-500" data-testid={`attestation-${a.key}-meta`}>
-                              Signed by {a.record.name || a.record.by} on {formatDateTime(a.record.at)}
-                              {a.record.ip ? ` from ${a.record.ip}` : ""}.
-                            </p>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="gap-2 bg-teal-600 hover:bg-teal-700"
-                              disabled={!canSignThis || attestMutation.isPending}
-                              onClick={() => attestMutation.mutate(a.key)}
-                              data-testid={`attestation-${a.key}-sign`}
-                            >
-                              {attestMutation.isPending && attestMutation.variables === a.key ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <PenLine className="w-4 h-4" />
-                              )}
-                              Record my attestation
-                            </Button>
-                          )}
-                          {!a.attested && !canSignThis && (
-                            <p className="text-xs text-slate-500">
-                              Only the {a.label} for this subsidiary can record this attestation.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            </div>
-
-            {/* Gate checklist ----------------------------------------------------- */}
-            <Card className={cn("border-slate-200 shadow-sm", activeTab !== LAST_TAB && "hidden")} data-testid="gate-card">
-              <CardHeader className="border-b border-slate-100">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <ClipboardCheck className="w-5 h-5 text-teal-600" />
-                    What&apos;s needed to submit
-                  </CardTitle>
-                  {gate && (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "font-medium",
-                        gate.complete
-                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                          : "bg-amber-100 text-amber-800 border-amber-200"
-                      )}
-                    >
-                      {gate.complete ? "Gate complete" : `${gate.missing.length} item(s) missing`}
-                    </Badge>
-                  )}
-                </div>
-                <CardDescription>
-                  Rendered directly from the server gate — fields first, then the required documents.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-6 space-y-6">
-                {!selectedId ? (
-                  <p className="text-sm text-slate-500">
-                    Save the draft to see the live checklist.
-                  </p>
-                ) : loadingGate ? (
-                  <div className="flex items-center gap-2 text-slate-500">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Evaluating the gate...
-                  </div>
-                ) : gateError || !gate ? (
-                  <Alert variant="destructive" className="border-red-200 bg-red-50">
-                    <AlertTriangle className="h-4 w-4 text-red-600" />
-                    <AlertDescription className="text-red-900">
-                      Could not load the gate status.{" "}
-                      <button
-                        type="button"
-                        className="underline font-medium"
-                        onClick={() => queryClient.invalidateQueries({ queryKey: ["gateStatus", selectedId] })}
-                      >
-                        Retry
-                      </button>
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="font-medium text-slate-700">Document completeness</span>
-                        <span className="text-slate-600">{completeness}%</span>
-                      </div>
-                      <Progress value={completeness} className="h-2" />
-                    </div>
-
-                    <Tabs defaultValue="checklist" className="w-full">
-                      <TabsList className="grid w-full grid-cols-2 max-w-md">
-                        <TabsTrigger value="checklist">Checklist</TabsTrigger>
-                        <TabsTrigger value="documents">Documents</TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent value="checklist" className="mt-4 space-y-5">
-                        {fieldGroups.map((group) => {
-                          const groupFields = (gate.fields || []).filter((f) => f.section === group.key);
-                          if (groupFields.length === 0) return null;
-                          return (
-                            <div key={group.key} className="space-y-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                {SECTION_TITLES[group.key] || group.label}
-                              </p>
-                              <ul className="space-y-1.5">
-                                {groupFields.map((field) => (
-                                  <li key={field.key} className="flex items-center gap-2 text-sm">
-                                    {field.present ? (
-                                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                                    ) : (
-                                      <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                    )}
-                                    <span className={field.present ? "text-slate-700" : "text-slate-900 font-medium"}>
-                                      {field.label}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          );
-                        })}
-
-                        <Separator />
-
-                        <div className="space-y-2">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            {t("submit.requiredDocuments")}
-                          </p>
-                          <ul className="space-y-1.5">
-                            {(gate.documents || []).map((document) => (
-                              <li key={document.key} className="flex items-center gap-2 text-sm">
-                                {document.present ? (
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                                ) : (
-                                  <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                                )}
-                                <span className={document.present ? "text-slate-700" : "text-slate-900 font-medium"}>
-                                  {document.label}
-                                </span>
-                                {!document.required && (
-                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                    optional
-                                  </Badge>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <Separator />
-
-                        {renderSufficiencyCard()}
-                      </TabsContent>
-
-                      <TabsContent value="documents" className="mt-4 space-y-3">
-                        {(gate.documents || []).map((requirement) => {
-                          const current = currentVersionFor(requirement.key);
-                          const isCurrentUpload =
-                            uploadMutation.isPending &&
-                            uploadMutation.variables?.requirementKey === requirement.key;
-                          return (
-                            <div
-                              key={requirement.key}
-                              className="rounded-lg border border-slate-200 p-4 space-y-3"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <div className="font-medium text-slate-900 flex items-center gap-2">
-                                    {requirement.label}
-                                    {requirement.present ? (
-                                      <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                                        provided
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">
-                                        missing
-                                      </Badge>
-                                    )}
-                                    {!requirement.required && (
-                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                        optional
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  {requirement.description && (
-                                    <p className="text-sm text-slate-500 mt-0.5">{requirement.description}</p>
-                                  )}
-                                </div>
-                              </div>
-
-                              {current ? (
-                                <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="font-medium text-slate-900 truncate">
-                                        {current.original_name}
-                                      </p>
-                                      <p className="text-xs text-slate-500">
-                                        v{current.version} • uploaded {formatDateTime(current.uploaded_at)}
-                                        {current.uploaded_by ? ` by ${current.uploaded_by}` : ""}
-                                      </p>
-                                      {current.scan_verdict && (
-                                        <p className="text-xs mt-1 flex items-center gap-2" data-testid={`scan-verdict-${requirement.key}`}>
-                                          <ShieldCheck
-                                            className={cn(
-                                              "w-3.5 h-3.5",
-                                              current.scan_verdict === "clean" ? "text-emerald-600" : "text-amber-600"
-                                            )}
-                                          />
-                                          <span className={cn(
-                                            current.scan_verdict === "clean" ? "text-emerald-700" : "text-amber-700"
-                                          )}>
-                                            Virus scan: {current.scan_verdict}{current.scan_engine ? ` (${current.scan_engine})` : ""}
-                                          </span>
-                                        </p>
-                                      )}
-                                      {priorVersionsFor(requirement.key).length > 0 && (
-                                        <p className="text-xs text-slate-400 mt-1" data-testid={`version-history-${requirement.key}`}>
-                                          {priorVersionsFor(requirement.key).length} previous version
-                                          {priorVersionsFor(requirement.key).length === 1 ? "" : "s"} retained
-                                        </p>
-                                      )}
-                                    </div>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-red-600 hover:text-red-700 hover:bg-red-50 shrink-0"
-                                      disabled={!editable}
-                                      onClick={() => setPendingDelete({ document: current, label: requirement.label })}
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="text-sm text-slate-500">No version uploaded yet.</p>
-                              )}
-
-                              <label className="inline-flex">
-                                <input
-                                  type="file"
-                                  className="hidden"
-                                  disabled={isCurrentUpload || !editable}
-                                  onChange={(event) => handleUpload(requirement.key, event)}
-                                />
-                                <span
-                                  className={cn(
-                                    "inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 cursor-pointer hover:bg-slate-50",
-                                    (isCurrentUpload || !editable) && "opacity-50 pointer-events-none"
-                                  )}
-                                >
-                                  {isCurrentUpload ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : current ? (
-                                    <RefreshCw className="w-4 h-4" />
-                                  ) : (
-                                    <Upload className="w-4 h-4" />
-                                  )}
-                                  {current ? "Replace" : "Upload"}
-                                </span>
-                              </label>
-                            </div>
-                          );
-                        })}
-                      </TabsContent>
-                    </Tabs>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-            </div>
-
-            {/* Progress rail ------------------------------------------------------ */}
-            <div className="space-y-4 min-w-0">
-            <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm" data-testid="capture-rail">
-              {selectedId && gate ? (
-                <>
-                  <p className="font-semibold text-slate-900">{itemsLeft} items left</p>
-                  <Progress value={completeness} className="h-1.5 mt-2 mb-3" />
-                  <div className="space-y-0.5">
                     {CAPTURE_TABS.map((tab, index) => (
                       <button
                         key={tab.key}
                         type="button"
+                        role="tab"
+                        aria-selected={activeTab === index}
+                        data-testid={`capture-tab-${tab.key}`}
                         onClick={() => setActiveTab(index)}
                         className={cn(
-                          "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs",
-                          activeTab === index ? "bg-teal-50 font-semibold text-teal-700" : "text-slate-600 hover:bg-slate-50"
+                          "flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-3 text-sm transition-colors",
+                          activeTab === index
+                            ? "border-teal-600 font-semibold text-teal-700"
+                            : "border-transparent text-slate-500 hover:text-slate-800"
                         )}
                       >
-                        <span>{tab.label}</span>
-                        {progressByTab[index].total > 0 && (
-                          <span>{progressByTab[index].present} of {progressByTab[index].total}</span>
+                        {tab.label}
+                        {selectedId && missingByTab[index] > 0 && (
+                          <span
+                            className="rounded-full bg-red-100 px-1.5 text-[11px] font-medium text-red-700"
+                            title={`${missingByTab[index]} item(s) missing`}
+                            data-testid={`capture-tab-missing-${tab.key}`}
+                          >
+                            {missingByTab[index]}
+                          </span>
                         )}
                       </button>
                     ))}
                   </div>
-                </>
-              ) : (
-                <p className="text-xs text-slate-500">Save the draft to track progress by section.</p>
+                  <CardContent className="p-6 space-y-6">
+                    {fieldGroups.map((group) => (
+                      <div
+                        key={group.key}
+                        className={cn("space-y-4", tabIndexForSection(group.key) !== activeTab && "hidden")}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h3 className="font-semibold text-slate-900">
+                              {SECTION_TITLES[group.key] || group.label}
+                            </h3>
+                            <p className="text-sm text-slate-500">{group.description}</p>
+                          </div>
+                          {sectionProgressByKey.get(group.key) && (
+                            <div className="w-32 shrink-0" data-testid={`section-progress-${group.key}`}>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500">
+                                  {sectionProgressByKey.get(group.key).present}/
+                                  {sectionProgressByKey.get(group.key).total}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "font-medium",
+                                    sectionProgressByKey.get(group.key).complete
+                                      ? "text-emerald-600"
+                                      : "text-slate-500"
+                                  )}
+                                >
+                                  {sectionProgressByKey.get(group.key).progress}%
+                                </span>
+                              </div>
+                              <Progress
+                                value={sectionProgressByKey.get(group.key).progress}
+                                className="h-1.5 mt-1"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid md:grid-cols-2 gap-4">
+                          {group.fields
+                            .filter((field) => !(group.key === "financials"
+                              && (VALUATION_CARD_KEYS.has(field.key) || CROSS_BORDER_CARD_KEYS.has(field.key) || CURRENCY_CARD_KEYS.has(field.key)))
+                              && !(group.key === "risks" && (HARD_FILTER_CARD_KEYS.has(field.key) || SOFT_FILTER_CARD_KEYS.has(field.key) || DISQUALIFIER_CARD_KEYS.has(field.key) || ADVERSE_MEDIA_CARD_KEYS.has(field.key))))
+                            .map((field) => (
+                              <div
+                                key={field.key}
+                                className={cn(
+                                  "space-y-2",
+                                  (field.type === "textarea" || !FIELD_TYPES.has(field.type)) && "md:col-span-2"
+                                )}
+                              >
+                                <Label htmlFor={field.key} className="flex items-center gap-1.5">
+                                  {field.label}
+                                  {field.required && (
+                                    <span className="text-red-500" title="Required to submit">*</span>
+                                  )}
+                                  {selectedId && gate && (
+                                    missingKeys.has(field.key) ? (
+                                      <XCircle className="w-3.5 h-3.5 text-red-500" />
+                                    ) : (
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                    )
+                                  )}
+                                </Label>
+                                {renderField(field)}
+                              </div>
+                            ))}
+                        </div>
+                        {group.key === "header" && <Separator className="!mt-6" />}
+                        {group.key === "risks" && (
+                          <>
+                            <Separator className="!mt-6" />
+                            {renderHardFilters()}
+                            <Separator />
+                            {renderSoftFilters()}
+                            <Separator />
+                            {renderDisqualifiers()}
+                            <Separator />
+                            {renderAdverseMedia()}
+                            <Separator />
+                          </>
+                        )}
+                        {group.key === "financials" && (
+                          <>
+                            <Separator className="!mt-6" />
+                            {renderCurrency()}
+                            <Separator />
+                            {renderFinancialGrid()}
+                            {renderStatementModelCard()}
+                            {renderReturnsCard()}
+                            {renderWaccCard()}
+                            {renderHurdleTable()}
+                            <Separator />
+                            {renderValuation()}
+                            <Separator />
+                            {renderCrossBorder()}
+                            {crossBorderGate?.applies && <Separator />}
+                          </>
+                        )}
+                        {group.key === "funding" && (
+                          <>
+                            <Separator className="!mt-6" />
+                            {renderSourcesUses()}
+                            <Separator />
+                            {renderBudgetStatus()}
+                            <Separator />
+                          </>
+                        )}
+                      </div>
+                    ))}
+
+                    <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
+                      <Separator />
+
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="owner_email" className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-slate-500" />
+                            {t("submit.owner")}
+                          </Label>
+                          {users.length > 0 ? (
+                            <Select
+                              value={form.owner_email || "__none__"}
+                              onValueChange={(value) => handleChange("owner_email", value === "__none__" ? "" : value)}
+                            >
+                              <SelectTrigger id="owner_email">
+                                <SelectValue placeholder="Assign an owner..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Unassigned</SelectItem>
+                                {users.map((user) => (
+                                  <SelectItem key={user.id || user.email} value={user.email}>
+                                    {user.full_name ? `${user.full_name} (${user.email})` : user.email}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              id="owner_email"
+                              type="email"
+                              value={form.owner_email || ""}
+                              placeholder="owner@company.com"
+                              onChange={(event) => handleChange("owner_email", event.target.value)}
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                          onClick={handleSave}
+                          disabled={busy || !editable}
+                          title={editable ? undefined : "Locked while Sirius reviews it"}
+                          className="bg-teal-600 hover:bg-teal-700 gap-2"
+                        >
+                          {saveMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Save className="w-4 h-4" />
+                          )}
+                          {selectedId ? "Save changes" : "Save as draft"}
+                        </Button>
+                        {(!selectedId || currentState === DRAFT_STATUS) && (
+                          <Button
+                            variant="outline"
+                            className="gap-2"
+                            disabled={!selectedId || busy}
+                            onClick={handleSubmit}
+                          >
+                            {submitMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Send className="w-4 h-4" />
+                            )}
+                            {t("submit.submitForScreening")}
+                          </Button>
+                        )}
+                        {!editable && (
+                          <span className="text-sm text-slate-500" data-testid="capture-readonly">
+                            Locked in {STATUS_META[currentState]?.label || currentState}. Sirius will unlock it if they need more information.
+                          </span>
+                        )}
+                        {!selectedId && (
+                          <span className="text-sm text-slate-500">Save the draft first to unlock the gate checklist.</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4" data-testid="capture-footer">
+                      <Button
+                        variant="outline"
+                        disabled={activeTab === 0}
+                        onClick={() => goToTab(activeTab - 1)}
+                        data-testid="capture-back"
+                      >
+                        Back
+                      </Button>
+                      {activeTab < LAST_TAB && (
+                        <Button
+                          className="bg-teal-600 hover:bg-teal-700 gap-2"
+                          disabled={busy}
+                          onClick={handleSaveAndContinue}
+                          data-testid="capture-save-continue"
+                        >
+                          {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                          Save and Continue
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
-            </aside>
+
+              {/* Information requested (WF-04) -------------------------------------- */}
+              {infoRequested && (
+                <Card className="border-amber-200 bg-amber-50/60 shadow-sm" data-testid="info-request-panel">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base text-amber-900">
+                      <AlertTriangle className="w-4 h-4" /> Sirius has requested information
+                    </CardTitle>
+                    <CardDescription className="text-amber-900/80">
+                      The form is unlocked. Answer each question, update the record if needed, then send your response.
+                      A change to the figures clears the CEO and CFO attestations, so they re-confirm before you respond.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {infoThreadsQuery.isLoading && (
+                      <p className="text-sm text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading questions...</p>
+                    )}
+                    {infoThreads.map((thread) => (
+                      <div key={thread.id} className="rounded-md border border-amber-200 bg-white p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-medium text-slate-900">{thread.subject}</p>
+                          <div className="flex items-center gap-2">
+                            {thread.due_at && (
+                              <Badge variant="outline" className={cn(thread.overdue ? "bg-red-100 text-red-800 border-red-200" : "bg-slate-100 text-slate-700")}>
+                                due {formatDateTime(thread.due_at)}
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className={thread.display_status === "open" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-emerald-100 text-emerald-800 border-emerald-200"}>
+                              {thread.display_status === "open" ? "awaiting your answer" : thread.display_status}
+                            </Badge>
+                          </div>
+                        </div>
+                        {thread.first_message && <p className="text-sm text-slate-700 whitespace-pre-wrap">{thread.first_message}</p>}
+                        {thread.display_status === "open" && (
+                          <div className="space-y-2">
+                            <Textarea
+                              rows={3}
+                              value={answers[thread.id] || ""}
+                              placeholder="Your answer..."
+                              data-testid={`info-answer-${thread.id}`}
+                              onChange={(event) => setAnswers((prev) => ({ ...prev, [thread.id]: event.target.value }))}
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-2"
+                              disabled={!String(answers[thread.id] || "").trim() || answerMutation.isPending}
+                              onClick={() => answerMutation.mutate({ threadId: thread.id, body: answers[thread.id].trim() })}
+                            >
+                              <Send className="w-3.5 h-3.5" /> Send answer
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <Separator />
+                    <div className="space-y-2">
+                      <Label htmlFor="response-note">Note to Sirius (optional)</Label>
+                      <Textarea id="response-note" rows={2} value={responseNote} onChange={(event) => setResponseNote(event.target.value)} />
+                      <Button
+                        className="bg-teal-600 hover:bg-teal-700 gap-2"
+                        disabled={busy || unanswered.length > 0}
+                        title={unanswered.length > 0 ? "Answer every question first" : undefined}
+                        data-testid="send-response"
+                        onClick={() => respondMutation.mutate()}
+                      >
+                        {respondMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                        Send response to Sirius
+                      </Button>
+                      {unanswered.length > 0 && (
+                        <p className="text-xs text-amber-800">{unanswered.length} question(s) still need an answer.</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Submit result ------------------------------------------------------ */}
+              {submitResult && (
+                <Alert className="border-emerald-200 bg-emerald-50" data-testid="submit-success">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <AlertTitle className="text-emerald-900">Submitted for screening</AlertTitle>
+                  <AlertDescription className="text-emerald-800">
+                    New state: <span className="font-semibold">{STATUS_META[normalizeState(submitResult.state)]?.label || submitResult.state}</span>.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {blockedGate && (
+                <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="submit-blocked">
+                  <AlertTriangle className="h-4 w-4 text-red-600" />
+                  <AlertTitle className="text-red-900">Submission blocked</AlertTitle>
+                  <AlertDescription className="text-red-900">
+                    <p className="mb-3">
+                      {blockedMessage ||
+                        "The opportunity did not pass the document gate. Resolve the items below and try again."}
+                    </p>
+                    <div className="space-y-3">
+                      {Object.keys(blockedGroups).map((section) =>
+                        blockedGroups[section].length > 0 ? (
+                          <div key={section}>
+                            <p className="font-semibold uppercase tracking-wide text-xs">
+                              {SECTION_TITLES[section] || (fieldModel?.sections || []).find((s) => s.key === section)?.label || section} ({blockedGroups[section].length})
+                            </p>
+                            <ul className="list-disc pl-5 mt-1 space-y-0.5">
+                              {blockedGroups[section].map((item) => (
+                                <li key={`${item.type}-${item.key}`}>{item.label}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className={cn("space-y-6", activeTab !== LAST_TAB && "hidden")}>
+                {/* Qualifying gates (W1-05 / INT-08) ---------------------------------- */}
+                {selectedId && gate?.qualifying_gates && (
+                  <Card className="border-slate-200 shadow-sm" data-testid="qualifying-gates">
+                    <CardHeader className="border-b border-slate-100">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <CardTitle className="flex items-center gap-2 text-lg">
+                          <ClipboardCheck className="w-5 h-5 text-teal-600" />
+                          Ten qualifying gates
+                        </CardTitle>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "font-medium",
+                            gate.qualifying_gates.complete
+                              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                              : "bg-amber-100 text-amber-800 border-amber-200"
+                          )}
+                          data-testid="qualifying-gates-status"
+                        >
+                          {gate.qualifying_gates.complete
+                            ? "All ten ready"
+                            : `${gate.qualifying_gates.blocking.length} gate(s) blocking`}
+                        </Badge>
+                      </div>
+                      <CardDescription>
+                        Every gate needs a <span className="font-medium">Yes</span> and its linked evidence. A No on any gate
+                        blocks submission with the not-ready message.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-6 space-y-4">
+                      {gate.qualifying_gates.blocking.length > 0 && (
+                        <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="qualifying-gates-blocked">
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                          <AlertTitle className="text-red-900">Not ready</AlertTitle>
+                          <AlertDescription className="text-red-900">
+                            {gate.qualifying_gates.message}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {gate.qualifying_gates.gates.map((g) => (
+                          <div
+                            key={g.key}
+                            className={cn(
+                              "rounded-lg border p-4 space-y-3",
+                              g.ready ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
+                            )}
+                            data-testid={`qualifying-gate-${g.key}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-medium text-slate-900 flex items-center gap-2">
+                                  {g.ready ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                                  )}
+                                  {g.number}. {g.label}
+                                </p>
+                                <p className="text-sm text-slate-600 mt-1">{g.question}</p>
+                              </div>
+                              <Select
+                                value={form[g.answer_key] || g.answer || ""}
+                                onValueChange={(value) => handleChange(g.answer_key, value)}
+                              >
+                                <SelectTrigger id={g.answer_key} className="w-24 shrink-0">
+                                  <SelectValue placeholder="—" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="yes">Yes</SelectItem>
+                                  <SelectItem value="no">No</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <ul className="space-y-1">
+                              {g.evidence.map((e) => (
+                                <li key={e.key} className="flex items-center gap-2 text-xs">
+                                  {e.present ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                  )}
+                                  <span className={e.present ? "text-slate-600" : "text-slate-900 font-medium"}>
+                                    Evidence: {e.label}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            {!g.ready && g.reason && (
+                              <p className="text-xs text-amber-800">{g.reason}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* CEO + CFO attestation gate (W1-06 / INT-09) ----------------------- */}
+                {selectedId && gate?.attestations && (
+                  <Card className="border-slate-200 shadow-sm" data-testid="attestations">
+                    <CardHeader className="border-b border-slate-100">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <CardTitle className="flex items-center gap-2 text-lg">
+                          <ShieldCheck className="w-5 h-5 text-teal-600" />
+                          CEO &amp; CFO attestation
+                        </CardTitle>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "font-medium",
+                            gate.attestations.complete
+                              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                              : "bg-amber-100 text-amber-800 border-amber-200"
+                          )}
+                          data-testid="attestations-status"
+                        >
+                          {gate.attestations.complete
+                            ? "Both recorded"
+                            : `${gate.attestations.missing.length} outstanding`}
+                        </Badge>
+                      </div>
+                      <CardDescription>
+                        Two named attestations are required before submission. Each records the person,
+                        the timestamp and the IP, and each is written to the audit log.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-6 space-y-4">
+                      {!gate.attestations.complete && (
+                        <Alert variant="destructive" className="border-red-200 bg-red-50" data-testid="attestations-blocked">
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                          <AlertTitle className="text-red-900">Not ready</AlertTitle>
+                          <AlertDescription className="text-red-900">
+                            {gate.attestations.message}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {gate.attestations.roles.map((a) => {
+                          const canSignThis =
+                            !a.attested &&
+                            ((currentUser?.roles || []).includes(a.role) || (currentUser?.roles || []).includes("admin"));
+                          return (
+                            <div
+                              key={a.key}
+                              className={cn(
+                                "rounded-lg border p-4 space-y-3",
+                                a.attested ? "border-emerald-200 bg-emerald-50/40" : "border-amber-200 bg-amber-50/40"
+                              )}
+                              data-testid={`attestation-${a.key}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="font-medium text-slate-900 flex items-center gap-2">
+                                  {a.attested ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <XCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                                  )}
+                                  {a.label}
+                                </p>
+                                {a.attested && (
+                                  <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                                    Recorded
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-slate-600 italic">“{a.text}”</p>
+                              {a.attested ? (
+                                <p className="text-xs text-slate-500" data-testid={`attestation-${a.key}-meta`}>
+                                  Signed by {a.record.name || a.record.by} on {formatDateTime(a.record.at)}
+                                  {a.record.ip ? ` from ${a.record.ip}` : ""}.
+                                </p>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="gap-2 bg-teal-600 hover:bg-teal-700"
+                                  disabled={!canSignThis || attestMutation.isPending}
+                                  onClick={() => attestMutation.mutate(a.key)}
+                                  data-testid={`attestation-${a.key}-sign`}
+                                >
+                                  {attestMutation.isPending && attestMutation.variables === a.key ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <PenLine className="w-4 h-4" />
+                                  )}
+                                  Record my attestation
+                                </Button>
+                              )}
+                              {!a.attested && !canSignThis && (
+                                <p className="text-xs text-slate-500">
+                                  Only the {a.label} for this subsidiary can record this attestation.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Gate checklist ----------------------------------------------------- */}
+              <Card className={cn("border-slate-200 shadow-sm", activeTab !== LAST_TAB && "hidden")} data-testid="gate-card">
+                <CardHeader className="border-b border-slate-100">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <ClipboardCheck className="w-5 h-5 text-teal-600" />
+                      What&apos;s needed to submit
+                    </CardTitle>
+                    {gate && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "font-medium",
+                          gate.complete
+                            ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                            : "bg-amber-100 text-amber-800 border-amber-200"
+                        )}
+                      >
+                        {gate.complete ? "Gate complete" : `${gate.missing.length} item(s) missing`}
+                      </Badge>
+                    )}
+                  </div>
+                  <CardDescription>
+                    Rendered directly from the server gate — fields first, then the required documents.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-6 space-y-6">
+                  {!selectedId ? (
+                    <p className="text-sm text-slate-500">
+                      Save the draft to see the live checklist.
+                    </p>
+                  ) : loadingGate ? (
+                    <div className="flex items-center gap-2 text-slate-500">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Evaluating the gate...
+                    </div>
+                  ) : gateError || !gate ? (
+                    <Alert variant="destructive" className="border-red-200 bg-red-50">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <AlertDescription className="text-red-900">
+                        Could not load the gate status.{" "}
+                        <button
+                          type="button"
+                          className="underline font-medium"
+                          onClick={() => queryClient.invalidateQueries({ queryKey: ["gateStatus", selectedId] })}
+                        >
+                          Retry
+                        </button>
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium text-slate-700">Document completeness</span>
+                          <span className="text-slate-600">{completeness}%</span>
+                        </div>
+                        <Progress value={completeness} className="h-2" />
+                      </div>
+
+                      <Tabs defaultValue="checklist" className="w-full">
+                        <TabsList className="grid w-full grid-cols-2 max-w-md">
+                          <TabsTrigger value="checklist">Checklist</TabsTrigger>
+                          <TabsTrigger value="documents">Documents</TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="checklist" className="mt-4 space-y-5">
+                          {fieldGroups.map((group) => {
+                            const groupFields = (gate.fields || []).filter((f) => f.section === group.key);
+                            if (groupFields.length === 0) return null;
+                            return (
+                              <div key={group.key} className="space-y-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  {SECTION_TITLES[group.key] || group.label}
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {groupFields.map((field) => (
+                                    <li key={field.key} className="flex items-center gap-2 text-sm">
+                                      {field.present ? (
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                      ) : (
+                                        <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                      )}
+                                      <span className={field.present ? "text-slate-700" : "text-slate-900 font-medium"}>
+                                        {field.label}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            );
+                          })}
+
+                          <Separator />
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              {t("submit.requiredDocuments")}
+                            </p>
+                            <ul className="space-y-1.5">
+                              {(gate.documents || []).map((document) => (
+                                <li key={document.key} className="flex items-center gap-2 text-sm">
+                                  {document.present ? (
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                                  ) : (
+                                    <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                                  )}
+                                  <span className={document.present ? "text-slate-700" : "text-slate-900 font-medium"}>
+                                    {document.label}
+                                  </span>
+                                  {!document.required && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                      optional
+                                    </Badge>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <Separator />
+
+                          {renderSufficiencyCard()}
+                        </TabsContent>
+
+                        <TabsContent value="documents" className="mt-4 space-y-3">
+                          {(gate.documents || []).map((requirement) => {
+                            const current = currentVersionFor(requirement.key);
+                            const isCurrentUpload =
+                              uploadMutation.isPending &&
+                              uploadMutation.variables?.requirementKey === requirement.key;
+                            return (
+                              <div
+                                key={requirement.key}
+                                className="rounded-lg border border-slate-200 p-4 space-y-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="font-medium text-slate-900 flex items-center gap-2">
+                                      {requirement.label}
+                                      {requirement.present ? (
+                                        <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                                          provided
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">
+                                          missing
+                                        </Badge>
+                                      )}
+                                      {!requirement.required && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                          optional
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    {requirement.description && (
+                                      <p className="text-sm text-slate-500 mt-0.5">{requirement.description}</p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {current ? (
+                                  <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="font-medium text-slate-900 truncate">
+                                          {current.original_name}
+                                        </p>
+                                        <p className="text-xs text-slate-500">
+                                          v{current.version} • uploaded {formatDateTime(current.uploaded_at)}
+                                          {current.uploaded_by ? ` by ${current.uploaded_by}` : ""}
+                                        </p>
+                                        {current.scan_verdict && (
+                                          <p className="text-xs mt-1 flex items-center gap-2" data-testid={`scan-verdict-${requirement.key}`}>
+                                            <ShieldCheck
+                                              className={cn(
+                                                "w-3.5 h-3.5",
+                                                current.scan_verdict === "clean" ? "text-emerald-600" : "text-amber-600"
+                                              )}
+                                            />
+                                            <span className={cn(
+                                              current.scan_verdict === "clean" ? "text-emerald-700" : "text-amber-700"
+                                            )}>
+                                              Virus scan: {current.scan_verdict}{current.scan_engine ? ` (${current.scan_engine})` : ""}
+                                            </span>
+                                          </p>
+                                        )}
+                                        {priorVersionsFor(requirement.key).length > 0 && (
+                                          <p className="text-xs text-slate-400 mt-1" data-testid={`version-history-${requirement.key}`}>
+                                            {priorVersionsFor(requirement.key).length} previous version
+                                            {priorVersionsFor(requirement.key).length === 1 ? "" : "s"} retained
+                                          </p>
+                                        )}
+                                      </div>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-red-600 hover:text-red-700 hover:bg-red-50 shrink-0"
+                                        disabled={!editable}
+                                        onClick={() => setPendingDelete({ document: current, label: requirement.label })}
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-slate-500">No version uploaded yet.</p>
+                                )}
+
+                                <label className="inline-flex">
+                                  <input
+                                    type="file"
+                                    className="hidden"
+                                    disabled={isCurrentUpload || !editable}
+                                    onChange={(event) => handleUpload(requirement.key, event)}
+                                  />
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 cursor-pointer hover:bg-slate-50",
+                                      (isCurrentUpload || !editable) && "opacity-50 pointer-events-none"
+                                    )}
+                                  >
+                                    {isCurrentUpload ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : current ? (
+                                      <RefreshCw className="w-4 h-4" />
+                                    ) : (
+                                      <Upload className="w-4 h-4" />
+                                    )}
+                                    {current ? "Replace" : "Upload"}
+                                  </span>
+                                </label>
+                              </div>
+                            );
+                          })}
+                        </TabsContent>
+                      </Tabs>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Progress rail ------------------------------------------------------ */}
+            <div className="space-y-4 min-w-0">
+              <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm" data-testid="capture-rail">
+                {selectedId && gate ? (
+                  <>
+                    <p className="font-semibold text-slate-900">{itemsLeft} items left</p>
+                    <Progress value={completeness} className="h-1.5 mt-2 mb-3" />
+                    <div className="space-y-0.5">
+                      {CAPTURE_TABS.map((tab, index) => (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => setActiveTab(index)}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs",
+                            activeTab === index ? "bg-teal-50 font-semibold text-teal-700" : "text-slate-600 hover:bg-slate-50"
+                          )}
+                        >
+                          <span>{tab.label}</span>
+                          {progressByTab[index].total > 0 && (
+                            <span>{progressByTab[index].present} of {progressByTab[index].total}</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-500">Save the draft to track progress by section.</p>
+                )}
+              </aside>
             </div>
           </div>
         </div>
